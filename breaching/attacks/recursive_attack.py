@@ -130,7 +130,7 @@ class RecursiveAttacker(_BaseAttacker):
                 k = np.multiply(np.matmul(last_weight.transpose(), k)[x_mask], da.transpose())
 
             if isinstance(module, (torch.nn.Conv2d, torch.nn.Linear)):
-                g = original_dy_dx[grad_idx].numpy()  # this only works for the given nets with bias=None
+                g = original_dy_dx[grad_idx].cpu().numpy() # this only works for the given nets with bias=None
                 grad_idx -= 1
                 w = module.weight.detach().cpu().numpy()
                 if isinstance(module, torch.nn.Conv2d):
