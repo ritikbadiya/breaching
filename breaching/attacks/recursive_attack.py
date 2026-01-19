@@ -17,6 +17,10 @@ from .auxiliaries.recursive_attack import (
     inverse_leakyrelu,
 )
 
+import logging
+
+log = logging.getLogger(__name__)
+
 
 class RecursiveAttacker(_BaseAttacker):
     """Implements a thin wrapper around the original R-GAP code.
@@ -69,7 +73,7 @@ class RecursiveAttacker(_BaseAttacker):
 
         # Initialize at last layer:
         module = all_modules[0]
-        print(module)
+        log.info(f"{module}")
 
         w = module.weight.detach().cpu().numpy()
         if module.bias is None:
@@ -81,7 +85,7 @@ class RecursiveAttacker(_BaseAttacker):
             # For simplicity assume y as known here. For details please refer to the paper.
             y = 0.1  # this is a simplification the orignal paper's code only works for binary class.
 
-            print(f"pred_: {u/y:.1e}, udldu: {udldu:.1e}, udldu_:{-u/(1+np.exp(u)):.1e}")
+            log.info(f"pred_: {u/y:.1e}, udldu: {udldu:.1e}, udldu_:{-u/(1+np.exp(u)):.1e}")
             k = -y / (1 + np.exp(u))
             k = k.reshape(1, -1).astype(np.float32)
             x_, last_weight = fcn_reconstruction(k=k, gradient=g), w
@@ -99,7 +103,7 @@ class RecursiveAttacker(_BaseAttacker):
         # Recurse through all other layers. Expects an alternating structure  of activation and linear layer
         # For R-GAP the activation has to be invertible
         for idx, module in enumerate(all_modules[1:]):
-            print(module)
+            log.info(f"{module}")
 
             if isinstance(module, (torch.nn.LeakyReLU, torch.nn.Identity)):  # or any activation function really!
                 # derive activation function
@@ -130,7 +134,7 @@ class RecursiveAttacker(_BaseAttacker):
                 k = np.multiply(np.matmul(last_weight.transpose(), k)[x_mask], da.transpose())
 
             if isinstance(module, (torch.nn.Conv2d, torch.nn.Linear)):
-                g = original_dy_dx[grad_idx].numpy()  # this only works for the given nets with bias=None
+                g = original_dy_dx[grad_idx].cpu().numpy()  # this only works for the given nets with bias=None
                 grad_idx -= 1
                 w = module.weight.detach().cpu().numpy()
                 if isinstance(module, torch.nn.Conv2d):
