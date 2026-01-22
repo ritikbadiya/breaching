@@ -1,4 +1,6 @@
 outputs
+logs/
+data/
 tables/*/*.csv
 tables/*/*.csv#
 tables/*.csv
