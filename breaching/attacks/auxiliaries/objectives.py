@@ -1,6 +1,7 @@
 """Various objective functions that can be re-used for multiple attacks."""
 
 import torch
+from torch.nn.attention import SDPBackend, sdpa_kernel
 from typing import List
 
 from .make_functional import make_functional_with_buffers
@@ -41,7 +42,8 @@ class GradientLoss(torch.nn.Module):
         """Compute a single gradient."""
         model.zero_grad()
         with torch.autocast(candidate.device.type, enabled=self.cfg_impl.mixed_precision):
-            task_loss = self.loss_fn(model(candidate), labels)
+            with sdpa_kernel([SDPBackend.MATH, SDPBackend.EFFICIENT_ATTENTION]):
+                task_loss = self.loss_fn(model(candidate), labels)
         gradient = torch.autograd.grad(task_loss, model.parameters(), create_graph=True)
         return gradient, task_loss
 
@@ -58,7 +60,8 @@ class GradientLoss(torch.nn.Module):
             seen_data_idx = seen_data_idx % candidate.shape[0]
             labels = self.local_hyperparams["labels"][i]
             with torch.autocast(candidate.device.type, enabled=self.cfg_impl.mixed_precision):
-                task_loss = self.loss_fn(func_model(params, buffers, data), labels)
+                with sdpa_kernel([SDPBackend.MATH, SDPBackend.EFFICIENT_ATTENTION]):
+                    task_loss = self.loss_fn(func_model(params, buffers, data), labels)
 
             step_gradient = torch.autograd.grad(task_loss, params, create_graph=True)
 

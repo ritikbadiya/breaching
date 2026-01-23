@@ -24,7 +24,15 @@ def system_startup(process_idx, local_group_size, cfg):
     """Decide and print GPU / CPU / hostname info. Generate local distributed setting if running in distr. mode."""
     log = get_log(cfg)
     torch.backends.cudnn.benchmark = cfg.case.impl.benchmark
-    torch.multiprocessing.set_sharing_strategy(cfg.case.impl.sharing_strategy)
+    sharing_strategy = cfg.case.impl.sharing_strategy
+    if sharing_strategy in torch.multiprocessing.get_all_sharing_strategies():
+        torch.multiprocessing.set_sharing_strategy(sharing_strategy)
+    else:
+        log.warning(
+            f"Multiprocessing sharing strategy {sharing_strategy} not supported on this platform. "
+            f"Available strategies: {torch.multiprocessing.get_all_sharing_strategies()}. "
+            f"Continuing with default."
+        )
     huggingface_offline_mode(cfg.case.impl.enable_huggingface_offline_mode)
     # 100% reproducibility?
     if cfg.case.impl.deterministic:
