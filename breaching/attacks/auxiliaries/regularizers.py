@@ -117,19 +117,16 @@ class TotalVariation(torch.nn.Module):
         self.eps = eps
         self.double_opponents = double_opponents
 
-        grad_weight = torch.tensor([[0, 0, 0], [0, -1, 1], [0, 0, 0]], **setup).unsqueeze(0).unsqueeze(1)
-        grad_weight = torch.cat((torch.transpose(grad_weight, 2, 3), grad_weight), 0)
-        self.groups = 6 if self.double_opponents else 3
-        grad_weight = torch.cat([grad_weight] * self.groups, 0)
-
-        self.register_buffer("weight", grad_weight)
-
     def initialize(self, models, *args, **kwargs):
+        # We assume all shared data and models have the same number of channels
+        # This is a bit of a hack to get the channel count here if it's not passed to init
+        # In this framework, tensor.shape[1] at forward time is the ultimate source of truth.
         pass
 
     def forward(self, tensor, *args, **kwargs):
         """Use a convolution-based approach."""
-        if self.double_opponents:
+        channels = tensor.shape[1]
+        if self.double_opponents and channels == 3:
             tensor = torch.cat(
                 [
                     tensor,
@@ -139,8 +136,19 @@ class TotalVariation(torch.nn.Module):
                 ],
                 dim=1,
             )
+            groups = 6
+        else:
+            groups = channels
+
+        # Construct weight on the fly if needed or cache it based on channels
+        if not hasattr(self, "_weight") or self._weight.shape[1] * self._weight.shape[0] // 2 != channels:
+            grad_weight = torch.tensor([[0, 0, 0], [0, -1, 1], [0, 0, 0]], **self.setup).unsqueeze(0).unsqueeze(1)
+            grad_weight = torch.cat((torch.transpose(grad_weight, 2, 3), grad_weight), 0)
+            grad_weight = torch.cat([grad_weight] * groups, 0)
+            self.register_buffer("_weight", grad_weight, persistent=False)
+
         diffs = torch.nn.functional.conv2d(
-            tensor, self.weight, None, stride=1, padding=1, dilation=1, groups=self.groups
+            tensor, self._weight, None, stride=1, padding=1, dilation=1, groups=groups
         )
         squares = (diffs.abs() + self.eps).pow(self.inner_exp)
         squared_sums = (squares[:, 0::2] + squares[:, 1::2]).pow(self.outer_exp)

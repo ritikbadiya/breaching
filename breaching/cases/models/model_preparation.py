@@ -401,10 +401,20 @@ def _construct_vision_model(cfg_model, cfg_data, pretrained=True, **kwargs):
             )
         elif "vit_small" in cfg_model:
             import timm
-
-            model = timm.create_model('vit_small_patch16_224', pretrained=pretrained, 
-                                      img_size=(32,32),
-                                      num_classes=classes)
+            img_size = (cfg_data.shape[1], cfg_data.shape[2])
+            in_chans = cfg_data.shape[0]
+            model = timm.create_model("vit_small_patch16_224", pretrained=pretrained, img_size=img_size, in_chans=in_chans, num_classes=classes)
+        elif "custom" in cfg_model:
+            # Provision for custom ViT or other models
+            if "vit" in cfg_model:
+                img_size = (cfg_data.shape[1], cfg_data.shape[2])
+                in_chans = cfg_data.shape[0]
+                model = SmallViT(img_size=img_size, in_chans=in_chans, num_classes=classes, 
+                             patch_size=4, embed_dim=192, depth=4, num_heads=3)
+                if "april" in cfg_model:
+                    model.model.blocks[0] = ModifiedBlock(model.model.blocks[0])
+            else:
+                raise ValueError(f"Custom model type not recognized in {cfg_model}")
         else:
             raise ValueError("Model could not be found.")
 
@@ -532,7 +542,7 @@ class ModifiedBlock(torch.nn.Module):
     def __init__(self, old_Block):
         super().__init__()
         self.attn = old_Block.attn
-        self.drop_path = old_Block.drop_path
+        self.drop_path = old_Block.drop_path1
         self.norm2 = old_Block.norm2
         self.mlp = old_Block.mlp
 
@@ -540,3 +550,25 @@ class ModifiedBlock(torch.nn.Module):
         x = self.attn(x)
         x = self.drop_path(self.mlp((self.norm2(x))))
         return x
+
+
+class SmallViT(torch.nn.Module):
+    """A small ViT variant for low-resolution images like MNIST/CIFAR."""
+
+    def __init__(self, img_size=(32, 32), patch_size=4, in_chans=3, num_classes=10, embed_dim=192, depth=4, num_heads=3, mlp_ratio=4.0):
+        super().__init__()
+        import timm.models.vision_transformer
+        self.model = timm.models.vision_transformer.VisionTransformer(
+            img_size=img_size,
+            patch_size=patch_size,
+            in_chans=in_chans,
+            num_classes=num_classes,
+            embed_dim=embed_dim,
+            depth=depth,
+            num_heads=num_heads,
+            mlp_ratio=mlp_ratio,
+            qkv_bias=True,
+        )
+
+    def forward(self, x):
+        return self.model(x)

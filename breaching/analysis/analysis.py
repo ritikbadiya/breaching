@@ -246,7 +246,13 @@ def _run_vision_metrics(
     avg_ssim, max_ssim = cw_ssim(rec_denormalized, ground_truth_denormalized, scales=5)
 
     # Hint: This part switches to the lpips [-1, 1] normalization:
-    lpips_score = lpips_scorer(rec_denormalized, ground_truth_denormalized, normalize=True)
+    if rec_denormalized.shape[-1] < 32:
+        lpips_rec = torch.nn.functional.interpolate(rec_denormalized, size=(32, 32), mode="bilinear", align_corners=False)
+        lpips_gt = torch.nn.functional.interpolate(ground_truth_denormalized, size=(32, 32), mode="bilinear", align_corners=False)
+    else:
+        lpips_rec, lpips_gt = rec_denormalized, ground_truth_denormalized
+
+    lpips_score = lpips_scorer(lpips_rec, lpips_gt, normalize=True)
     avg_lpips, max_lpips = lpips_score.mean().item(), lpips_score.max().item()
 
     # Compute registered psnr. This is a bit computationally intensive:
@@ -343,10 +349,17 @@ def compute_batch_order(lpips_scorer, rec_denormalized, ground_truth_denormalize
     assert ground_truth_denormalized.shape[0] == B
 
     with torch.inference_mode():
+        # Handle low-resolution by resizing
+        if rec_denormalized.shape[-1] < 32:
+            rec_input = torch.nn.functional.interpolate(rec_denormalized, size=(32, 32), mode="bilinear", align_corners=False)
+            gt_input = torch.nn.functional.interpolate(ground_truth_denormalized, size=(32, 32), mode="bilinear", align_corners=False)
+        else:
+            rec_input, gt_input = rec_denormalized, ground_truth_denormalized
+
         # Compute all features [assume sufficient memory is a given]
         features_rec = []
-        for input in rec_denormalized:
-            input_scaled = lpips_scorer.scaling_layer(input)
+        for input in rec_input:
+            input_scaled = lpips_scorer.scaling_layer(input.unsqueeze(0))
             output = lpips_scorer.net.forward(input_scaled)
             layer_features = {}
             for kk in range(L):
@@ -354,8 +367,8 @@ def compute_batch_order(lpips_scorer, rec_denormalized, ground_truth_denormalize
             features_rec.append(layer_features)
 
         features_gt = []
-        for input in ground_truth_denormalized:
-            input_scaled = lpips_scorer.scaling_layer(input)
+        for input in gt_input:
+            input_scaled = lpips_scorer.scaling_layer(input.unsqueeze(0))
             output = lpips_scorer.net.forward(input_scaled)
             layer_features = {}
             for kk in range(L):
