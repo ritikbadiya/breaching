@@ -11,7 +11,7 @@ The framework implements **9 attack types** across **17 different attack configu
 ### Attack Types (Core Implementations)
 
 | Attack Type | Implementation File | Description |
-|-------------|---------------------|-------------|
+|:------------|:--------------------|:------------|
 | **Optimization** | [optimization_based_attack.py](./breaching/breaching/attacks/optimization_based_attack.py) | Standard gradient matching attacks (e.g., Inverting Gradients, Deep Leakage) |
 | **Multiscale** | [multiscale_optimization_attack.py](./breaching/breaching/attacks/multiscale_optimization_attack.py) | Multi-resolution optimization attacks |
 | **Analytic** | [analytic_attack.py](./breaching/breaching/attacks/analytic_attack.py) | Closed-form attacks for specific architectures |
@@ -25,7 +25,7 @@ The framework implements **9 attack types** across **17 different attack configu
 ### Available Attack Configurations
 
 | Config Name | Attack Type | Use Case |
-|-------------|-------------|----------|
+|:------------|:------------|:---------|
 | `invertinggradients` | optimization | Classic gradient inversion attack |
 | `deepleakage` | joint-optimization | DLG - also optimizes labels |
 | `analytic` | analytic | Analytic attack for linear models |
@@ -43,7 +43,7 @@ The framework implements **9 attack types** across **17 different attack configu
 ### Use Case Configurations (Scenarios)
 
 | Case Config | Description |
-|-------------|-------------|
+|:------------|:------------|
 | `0_sanity_check` | Quick verification test |
 | `1_single_image_small` | Single small image attack |
 | `2_single_imagenet` | Single ImageNet image attack |
@@ -251,7 +251,7 @@ impl:
 ### Key Files Reference
 
 | Purpose | File |
-|---------|------|
+|:--------|:-----|
 | Base attack class | [base_attack.py](./breaching/breaching/attacks/base_attack.py) |
 | Attack factory | [attacks/__init__.py](./breaching/breaching/attacks/__init__.py) |
 | Regularizers | [auxiliaries/regularizers.py](./breaching/breaching/attacks/auxiliaries/regularizers.py) |
@@ -294,7 +294,7 @@ python simulate_breach.py \
 Edit files in `breaching/config/attack/`:
 
 | Setting | File | Parameters |
-|---------|------|------------|
+|:----------------|:---------------------------|:---------------------------------------|
 | **Inverting Gradients** | [invertinggradients.yaml](./breaching/breaching/config/attack/invertinggradients.yaml) | `optim.max_iterations`, `optim.step_size`, `regularization.total_variation.scale` |
 | **Default optimization** | [_default_optimization_attack.yaml](./breaching/breaching/config/attack/_default_optimization_attack.yaml) | Base settings for all optimization attacks |
 | **Decepticon** | [decepticon.yaml](./breaching/breaching/config/attack/decepticon.yaml) | `token_strategy`, `embedding_token_weight`, `sentence_algorithm` |
@@ -320,7 +320,7 @@ cfg_attack = breaching.get_attack_config(
 #### Optimization-Based Attacks
 
 | Parameter | Location | Description |
-|-----------|----------|-------------|
+|:--------------|:---------|:------------|
 | `optim.max_iterations` | attack.optim | Number of optimization steps |
 | `optim.step_size` | attack.optim | Learning rate |
 | `optim.optimizer` | attack.optim | `adam`, `sgd`, `lbfgs` |
@@ -333,7 +333,7 @@ cfg_attack = breaching.get_attack_config(
 #### Analytic Attacks
 
 | Parameter | Location | Description |
-|-----------|----------|-------------|
+|:----------|:---------|:------------|
 | `token_strategy` | attack | Token recovery method |
 | `token_cutoff` | attack | Threshold for token recovery |
 | `sentence_algorithm` | attack | `k-means`, `greedy` |
@@ -363,7 +363,7 @@ python simulate_breach.py \
 ## Summary of Key Files
 
 | Purpose | Path |
-|---------|------|
+|:--------|:-----|
 | **Entry Points** | |
 | Single simulation | [simulate_breach.py](./breaching/simulate_breach.py) |
 | Benchmarking | [benchmark_breaches.py](./breaching/benchmark_breaches.py) |
