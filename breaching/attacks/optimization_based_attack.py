@@ -63,7 +63,6 @@ class OptimizationBasedAttacker(_BaseAttacker):
     def reconstruct(self, server_payload, shared_data, server_secrets=None, initial_data=None, dryrun=False):
         # Initialize stats module for later usage:
         rec_models, labels, stats = self.prepare_attack(server_payload, shared_data)
-        log.info(f"Number of models: {len(rec_models)}")
         # Main reconstruction loop starts here:
         scores = torch.zeros(self.cfg.restarts.num_trials)
         candidate_solutions = []
