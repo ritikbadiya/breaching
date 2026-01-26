@@ -4,6 +4,7 @@ import torch
 
 from .deepinversion import DeepInversionFeatureHook
 
+MOCOV2_RESNET50_URL = "https://dl.fbaipublicfiles.com/moco/moco_checkpoints/moco_v2_800ep/moco_v2_800ep_pretrain.pth.tar"
 
 class _LinearFeatureHook:
     """Hook to retrieve input to given module."""
@@ -236,6 +237,24 @@ class DeepInversion(torch.nn.Module):
 
     def __repr__(self):
         return f"Deep Inversion Regularization (matching batch norms), scale={self.scale}, first-bn-mult={self.first_bn_multiplier}"
+
+class ImagePrior(torch.nn.Module):
+    def __init__(self, setup, scale=0.1):
+        super().__init__()
+        self.setup = setup
+        self.scale = scale
+        self.moco = torch.hub.load('facebookresearch/moco:main', 'moco_v2_resnet50')
+        # self.moco = torch.hub.load_state_dict_from_url(MOCOV2_RESNET50_URL)
+        self.moco.eval()
+
+    def initialize(self, models, *args, **kwargs):
+        pass
+
+    def forward(self, tensor, *args, **kwargs):
+        return 0
+
+    def __repr__(self):
+        return f"Image Prior Regularization, scale={self.scale}"
 
 
 regularizer_lookup = dict(
