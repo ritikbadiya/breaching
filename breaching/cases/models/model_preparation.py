@@ -403,14 +403,17 @@ def _construct_vision_model(cfg_model, cfg_data, pretrained=True, **kwargs):
             import timm
             img_size = (cfg_data.shape[1], cfg_data.shape[2])
             in_chans = cfg_data.shape[0]
-            model = timm.create_model("vit_small_patch16_224", pretrained=pretrained, img_size=img_size, in_chans=in_chans, num_classes=classes)
+            model = timm.create_model("vit_small_patch16_224", pretrained=pretrained, 
+                                        img_size=img_size, 
+                                        in_chans=in_chans, 
+                                        num_classes=classes)
         elif "custom" in cfg_model:
             # Provision for custom ViT or other models
             if "vit" in cfg_model:
                 img_size = (cfg_data.shape[1], cfg_data.shape[2])
                 in_chans = cfg_data.shape[0]
                 model = SmallViT(img_size=img_size, in_chans=in_chans, num_classes=classes, 
-                             patch_size=4, embed_dim=192, depth=4, num_heads=3)
+                             patch_size=14, embed_dim=384, depth=4, num_heads=3)
                 if "april" in cfg_model:
                     model.model.blocks[0] = ModifiedBlock(model.model.blocks[0])
             else:
