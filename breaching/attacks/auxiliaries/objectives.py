@@ -213,27 +213,27 @@ class EuclideanGradCosSimPosEmbed(GradientLoss):
     def gradient_based_loss(self, gradient_rec, gradient_data):
         gradient_rec = list(gradient_rec)
         gradient_data = list(gradient_data)
+        # log.info(f"grad-rec: {len(gradient_rec)}, grad-data: {len(gradient_data)}")
         posembed_rec = gradient_rec.pop(1)
         posembed_data = gradient_data.pop(1)
-        return self._euclidean(gradient_rec, gradient_data) * self.scale #\
-            # + self._cosine_sim(posembed_rec, posembed_data) * self.posembed_scale
+        # log.info(f"grad-rec: {len(gradient_rec)}, grad-data: {len(gradient_data)}")
+        return self._euclidean(gradient_rec, gradient_data) * self.scale \
+            + self._cosine_sim(posembed_rec, posembed_data) * self.posembed_scale
 
     def __repr__(self):
         return f"Euclidean with scale={self.scale} and Cosine Similarity for PosEmbed with scale={self.posembed_scale} and task regularization {self.task_regularization}"
 
     @staticmethod
-    # @torch.jit.script
+    @torch.jit.script
     def _euclidean(gradient_rec: List[torch.Tensor], gradient_data: List[torch.Tensor]):
         objective = gradient_rec[0].new_zeros(1,)
         for rec, data in zip(gradient_rec, gradient_data):
-            # log.info(rec.shape)
-            # log.info(data.shape)
-            objective += (rec - data).pow(2).sum()
-        return 0.5 * objective
+            objective += (rec - data).pow(2).mean()
+        return objective
 
     @staticmethod
-    # @torch.jit.script
-    def _cosine_sim(gradient_rec: List[torch.Tensor], gradient_data: List[torch.Tensor]):
+    @torch.jit.script
+    def _cosine_sim(gradient_rec: torch.Tensor, gradient_data: torch.Tensor):
         scalar_product = (gradient_rec * gradient_data).sum(dim = -1)
         rec_norm = gradient_rec.pow(2).sum(dim = -1)
         data_norm = gradient_data.pow(2).sum(dim = -1)
