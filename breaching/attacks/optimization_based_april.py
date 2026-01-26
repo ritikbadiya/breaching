@@ -1,18 +1,15 @@
-"""Implementation for basic gradient inversion attacks.
-
-This covers optimization-based reconstruction attacks as in Wang et al. "Beyond Infer-
-ring Class Representatives: User-Level Privacy Leakage From Federated Learning."
-and convers subsequent developments such as
-* Zhu et al., "Deep Leakage from gradients",
-* Geiping et al., "Inverting Gradients - How easy is it to break privacy in FL"
-* ?
+""" Implements the Optimization based April attacks on ViT models.
+This method uses L2 loss optimization for the parameter gradients,
+And the positional embedding gradients are also recovered using cosine similarity loss
 """
 
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
 import time
 
-from .base_attack import _BaseAttacker
-from .auxiliaries.regularizers import regularizer_lookup, TotalVariation
+from .optimization_based_attack import OptimizationBasedAttacker
 from .auxiliaries.objectives import Euclidean, CosineSimilarity, objective_lookup
 from .auxiliaries.augmentations import augmentation_lookup
 
@@ -20,82 +17,30 @@ import logging
 
 log = logging.getLogger(__name__)
 
-
-class OptimizationBasedAttacker(_BaseAttacker):
-    """Implements a wide spectrum of optimization-based attacks."""
-
+class OptimizationAprilAttacker(OptimizationBasedAttacker):
+    """Implements an optimization-based attack that only recovers the patch information 
+    by opyimization L2 loss on the the parameter gradients.
+    And also optimizes the cosine similarity loss on the PosEmbed gradients
+    """
     def __init__(self, model, loss_fn, cfg_attack, setup=dict(dtype=torch.float, device=torch.device("cpu"))):
         super().__init__(model, loss_fn, cfg_attack, setup)
+        log.info("########## APRIL OPMIZATION BASED ATTACK ########")
         objective_fn = objective_lookup.get(self.cfg.objective.type)
         if objective_fn is None:
             raise ValueError(f"Unknown objective type {self.cfg.objective.type} given.")
         else:
-            self.objective = objective_fn(**self.cfg.objective)
-        self.regularizers = []
-        try:
-            for key in self.cfg.regularization.keys():
-                if self.cfg.regularization[key].scale > 0:
-                    self.regularizers += [regularizer_lookup[key](self.setup, **self.cfg.regularization[key])]
-        except AttributeError:
-            pass  # No regularizers selected.
-
-        try:
-            self.augmentations = []
-            for key in self.cfg.augmentations.keys():
-                self.augmentations += [augmentation_lookup[key](**self.cfg.augmentations[key])]
-            self.augmentations = torch.nn.Sequential(*self.augmentations).to(**setup)
-        except AttributeError:
-            self.augmentations = torch.nn.Sequential()  # No augmentations selected.
-
-    def __repr__(self):
-        n = "\n"
-        return f"""Attacker (of type {self.__class__.__name__}) with settings:
-    Hyperparameter Template: {self.cfg.type}
-
-    Objective: {repr(self.objective)}
-    Regularizers: {(n + ' '*18).join([repr(r) for r in self.regularizers])}
-    Augmentations: {(n + ' '*18).join([repr(r) for r in self.augmentations])}
-
-    Optimization Setup:
-        {(n + ' ' * 8).join([f'{key}: {val}' for key, val in self.cfg.optim.items()])}
-        """
-
-    def reconstruct(self, server_payload, shared_data, server_secrets=None, initial_data=None, dryrun=False):
-        # Initialize stats module for later usage:
-        rec_models, labels, stats = self.prepare_attack(server_payload, shared_data)
-        log.info(f"Number of models: {len(rec_models)}")
-        # Main reconstruction loop starts here:
-        scores = torch.zeros(self.cfg.restarts.num_trials)
-        candidate_solutions = []
-        try:
-            for trial in range(self.cfg.restarts.num_trials):
-                candidate_solutions += [
-                    self._run_trial(rec_models, shared_data, labels, stats, trial, initial_data, dryrun)
-                ]
-                scores[trial] = self._score_trial(candidate_solutions[trial], labels, rec_models, shared_data)
-        except KeyboardInterrupt:
-            print("Trial procedure manually interruped.")
-            pass
-        optimal_solution = self._select_optimal_reconstruction(candidate_solutions, scores, stats)
-        reconstructed_data = dict(data=optimal_solution, labels=labels)
-        if server_payload[0]["metadata"].modality == "text":
-            reconstructed_data = self._postprocess_text_data(reconstructed_data)
-        if "ClassAttack" in server_secrets:
-            # Only a subset of images was actually reconstructed:
-            true_num_data = server_secrets["ClassAttack"]["true_num_data"]
-            reconstructed_data["data"] = torch.zeros([true_num_data, *self.data_shape], **self.setup)
-            reconstructed_data["data"][server_secrets["ClassAttack"]["target_indx"]] = optimal_solution
-            reconstructed_data["labels"] = server_secrets["ClassAttack"]["all_labels"]
-        return reconstructed_data, stats
+            log.info(f"Objective settings: {self.cfg.objective}")
+            self.objective = objective_fn(scale=self.cfg.objective.scale, 
+                                        task_regularization=self.cfg.objective.task_regularization,
+                                        posembed_scale=self.cfg.objective.posembed_scale)
 
     def _run_trial(self, rec_model, shared_data, labels, stats, trial, initial_data=None, dryrun=False):
         """Run a single reconstruction trial."""
-
+        log.info(f"Running trial {trial} for April Optimization Model")
         # Initialize losses:
         for regularizer in self.regularizers:
             regularizer.initialize(rec_model, shared_data, labels)
         self.objective.initialize(self.loss_fn, self.cfg.impl, shared_data[0]["metadata"]["local_hyperparams"])
-
         # Initialize candidate reconstruction data
         candidate = self._initialize_data([shared_data[0]["metadata"]["num_data_points"], *self.data_shape])
         if initial_data is not None:
@@ -109,7 +54,12 @@ class OptimizationBasedAttacker(_BaseAttacker):
         current_wallclock = time.time()
         try:
             for iteration in range(self.cfg.optim.max_iterations):
-                closure = self._compute_objective(candidate, labels, rec_model, optimizer, shared_data, iteration)
+                closure = self._compute_objective(candidate, 
+                                                    labels, 
+                                                    rec_model, 
+                                                    optimizer, 
+                                                    shared_data, # Contains both gradients and posembed gradients
+                                                    iteration)
                 objective_value, task_loss = optimizer.step(closure), self.current_task_loss
                 scheduler.step()
 
@@ -188,32 +138,3 @@ class OptimizationBasedAttacker(_BaseAttacker):
             return total_objective
 
         return closure
-
-    def _score_trial(self, candidate, labels, rec_model, shared_data):
-        """Score candidate solutions based on some criterion."""
-
-        if self.cfg.restarts.scoring in ["euclidean", "cosine-similarity"]:
-            objective = Euclidean() if self.cfg.restarts.scoring == "euclidean" else CosineSimilarity()
-            objective.initialize(self.loss_fn, self.cfg.impl, shared_data[0]["metadata"]["local_hyperparams"])
-            score = 0
-            for model, data in zip(rec_model, shared_data):
-                score += objective(model, data["gradients"], candidate, labels)[0]
-        elif self.cfg.restarts.scoring in ["TV", "total-variation"]:
-            score = TotalVariation(scale=1.0)(candidate)
-        else:
-            raise ValueError(f"Scoring mechanism {self.cfg.scoring} not implemented.")
-        return score if score.isfinite() else float("inf")
-
-    def _select_optimal_reconstruction(self, candidate_solutions, scores, stats):
-        """Choose one of the candidate solutions based on their scores (for now).
-
-        More complicated combinations are possible in the future."""
-        optimal_val, optimal_index = torch.min(scores, dim=0)
-        optimal_solution = candidate_solutions[optimal_index]
-        stats["opt_value"] = optimal_val.item()
-        if optimal_val.isfinite():
-            log.info(f"Optimal candidate solution with rec. loss {optimal_val.item():2.4f} selected.")
-            return optimal_solution
-        else:
-            log.info("No valid reconstruction could be found.")
-            return torch.zeros_like(optimal_solution)

@@ -2,6 +2,7 @@
 import torch
 
 from .optimization_based_attack import OptimizationBasedAttacker
+from .optimization_based_april import OptimizationAprilAttacker
 from .multiscale_optimization_attack import MultiScaleOptimizationAttacker
 from .optimization_with_label_attack import OptimizationJointAttacker
 from .optimization_permutation_attack import OptimizationPermutationAttacker
@@ -14,6 +15,8 @@ def prepare_attack(model, loss, cfg_attack, setup=dict(dtype=torch.float, device
         attacker = OptimizationBasedAttacker(model, loss, cfg_attack, setup)
     elif cfg_attack.attack_type == "multiscale":
         attacker = MultiScaleOptimizationAttacker(model, loss, cfg_attack, setup)
+    elif cfg_attack.attack_type == "april-optimization":
+        attacker = OptimizationAprilAttacker(model, loss, cfg_attack, setup)
     elif cfg_attack.attack_type == "analytic":
         attacker = AnalyticAttacker(model, loss, cfg_attack, setup)
     elif cfg_attack.attack_type == "april-analytic":

@@ -1,0 +1,35 @@
+defaults:
+  - _default_optimization_attack
+  - _self_
+type: optimization
+attack_type: april-optimization
+
+objective:
+  type: euclidean-grad-cossim-posembed
+  scale: 1.0
+  posembed_scale: 0.1
+
+restarts:
+  num_trials: 1
+  scoring: "cosine-similarity"
+
+optim:
+  optimizer: adam
+  signed:
+  step_size: 0.1
+  boxed: False
+  max_iterations: 1500
+  step_size_decay: step-lr
+
+  callback: 100 # Print objective value every callback many iterations
+
+augmentations:
+
+differentiable_augmentations: False
+
+regularization:
+  # total_variation:
+  #   scale: 0.0
+  #   # 0.2 # The old version did not take the mean dx + dy as the new version, so this corresponds to 0.1 in the old repo
+  #   inner_exp: 1
+  #   outer_exp: 1
