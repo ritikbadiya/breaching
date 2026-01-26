@@ -6,7 +6,7 @@ This document provides a comprehensive analysis of the **Breaching** framework -
 
 ## 1. Attack Cases and Strategies Implemented
 
-The framework implements **9 attack types** across **17 different attack configurations**:
+The framework implements **9 attack types** across **18 different attack configurations**:
 
 ### Attack Types (Core Implementations)
 
@@ -16,6 +16,7 @@ The framework implements **9 attack types** across **17 different attack configu
 | **Multiscale** | [multiscale_optimization_attack.py](./breaching/breaching/attacks/multiscale_optimization_attack.py) | Multi-resolution optimization attacks |
 | **Analytic** | [analytic_attack.py](./breaching/breaching/attacks/analytic_attack.py) | Closed-form attacks for specific architectures |
 | **April-Analytic** | [analytic_attack.py](./breaching/breaching/attacks/analytic_attack.py) | APRIL attack for Vision Transformers |
+| **April-Optimization** | [optimization_based_april.py](./breaching/breaching/attacks/optimization_based_april.py) | APRIL attack for Vision Transformers |
 | **Imprint-Readout** | [analytic_attack.py](./breaching/breaching/attacks/analytic_attack.py) | Imprint attacks (Robbing the Fed) |
 | **Decepticon-Readout** | [analytic_attack.py](./breaching/breaching/attacks/analytic_attack.py) | Decepticon attacks for transformers/LLMs |
 | **Recursive** | [recursive_attack.py](./breaching/breaching/attacks/recursive_attack.py) | R-GAP recursive reconstruction |
@@ -30,6 +31,7 @@ The framework implements **9 attack types** across **17 different attack configu
 | `deepleakage` | joint-optimization | DLG - also optimizes labels |
 | `analytic` | analytic | Analytic attack for linear models |
 | `april_analytic` | april-analytic | APRIL attack for ViT |
+| `april_optimization` | april-optimization | APRIL attack for ViT |
 | `decepticon` | decepticon-readout | Text recovery from transformers |
 | `imprint` | imprint-readout | Robbing the Fed attack |
 | `rgap` | recursive | R-GAP recursive attack |
