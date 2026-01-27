@@ -6,7 +6,7 @@ task: causal-lm
 mlm_probability: 0.15
 disable_mlm: False
 
-path: "~/data"
+path: "./dataset"
 size: 16_068
 
 shape:

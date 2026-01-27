@@ -2,7 +2,7 @@ name: Birdsnap
 modality: vision
 task: classification
 
-path: "~/data"
+path: "./dataset"
 size: 49829
 classes: 500
 shape:
