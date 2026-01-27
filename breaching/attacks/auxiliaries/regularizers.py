@@ -238,9 +238,12 @@ class DeepInversion(torch.nn.Module):
     def __repr__(self):
         return f"Deep Inversion Regularization (matching batch norms), scale={self.scale}, first-bn-mult={self.first_bn_multiplier}"
 
-class ImagePrior(torch.nn.Module):
-    def __init__(self, setup, scale=0.1):
-        super().__init__()
+class ImagePrior(DeepInversion):
+    """Implements the ImagePrior regularization as used in Grad-ViT. 
+    Compare the BN stats with MoCoV2 pretrained ResNet50 features.
+    Different from the one implemented in DeepInversion and STG."""
+    def __init__(self, setup, scale=0.1, first_bn_multiplier=10):
+        super().__init__(setup, scale, first_bn_multiplier)
         self.setup = setup
         self.scale = scale
         self.moco = torch.hub.load('facebookresearch/moco:main', 'moco_v2_resnet50')
@@ -248,13 +251,86 @@ class ImagePrior(torch.nn.Module):
         self.moco.eval()
 
     def initialize(self, models, *args, **kwargs):
-        pass
-
-    def forward(self, tensor, *args, **kwargs):
-        return 0
+        """Initialize forward hooks."""
+        self.losses = []
+    
+        for module in self.moco.modules():
+            if isinstance(module, torch.nn.BatchNorm2d):
+                self.losses.append(DeepInversionFeatureHook(module))
 
     def __repr__(self):
-        return f"Image Prior Regularization, scale={self.scale}"
+        return f"Image Prior Regularization with MoCoV2 pretrained ResNet50, scale={self.scale}"
+    
+class PatchPrior(torch.nn.Module):
+    """Implements the PatchPrior regularization as used in Grad-ViT. 
+    Compute Total Variation on patches of the image instead of the whole image.
+    Pixel values among adjacent patch edges shall be in similar ranges."""
+    def __init__(self, setup, scale=0.1, inner_exp=1, outer_exp=1, double_opponents=False, eps=1e-8, patch_size=14):
+        super().__init__()
+        self.patch_size = patch_size
+        self.setup = setup
+        self.scale = scale
+        self.inner_exp = inner_exp
+        self.outer_exp = outer_exp
+        self.eps = eps
+        self.double_opponents = double_opponents
+
+    def total_variation_patches(self, x, P=16):
+        """Patch-based anisotropic TV computed on patch boundaries.
+
+        For a patch size `P`, compute the L2 norm of the difference across
+        vertical patch boundaries (between rows P*k-1 and P*k) and horizontal
+        patch boundaries (between cols P*k-1 and P*k). For each boundary the
+        difference is flattened across channels and the remaining spatial
+        dimension, producing a per-sample L2 norm. The function returns the
+        mean (over the batch) of the summed per-sample norms across all
+        boundaries.
+
+        Args:
+            x (torch.Tensor): input tensor with shape (B, C, H, W).
+            P (int): patch size (default 16).
+
+        Returns:
+            torch.Tensor: scalar tensor containing the mean patch-TV penalty.
+        """
+        B, C, H, W = x.shape
+
+        # Prepare per-sample accumulator
+        per_sample = x.new_zeros((B,))
+
+        # Vertical boundaries (along height): compare rows P*k-1 and P*k
+        n_vert = H // P
+        for k in range(1, n_vert):
+            a = x[:, :, P * k, :].reshape(B, -1)       # shape (B, C*W)
+            b = x[:, :, P * k - 1, :].reshape(B, -1)   # shape (B, C*W)
+            diff = a - b
+            norms = torch.norm(diff, p=2, dim=1)      # per-sample L2
+            per_sample = per_sample + norms
+
+        # Horizontal boundaries (along width): compare cols P*k-1 and P*k
+        n_horiz = W // P
+        for k in range(1, n_horiz):
+            a = x[:, :, :, P * k].reshape(B, -1)      # shape (B, C*H)
+            b = x[:, :, :, P * k - 1].reshape(B, -1)  # shape (B, C*H)
+            diff = a - b
+            norms = torch.norm(diff, p=2, dim=1)      # per-sample L2
+            per_sample = per_sample + norms
+
+        # If there were no boundaries (P larger than H or W), return zero
+        if (n_vert <= 1) and (n_horiz <= 1):
+            return x.new_tensor(0.0)
+
+        # Return mean over batch of summed per-sample boundary norms
+        return per_sample.mean()
+
+    def forward(self, tensor, *args, **kwargs):
+        """Compute Total Variation on patches of the image."""
+        tv_loss = self.total_variation_patches(tensor, P=self.patch_size)
+        return tv_loss
+
+    def __repr__(self):
+        return f"Patch Prior Total Variation, scale={self.scale}, patch_size={self.patch_size}, p={self.inner_exp} q={self.outer_exp}. {'Color TV: double oppponents' if self.double_opponents else ''}"
+
 
 
 regularizer_lookup = dict(
@@ -263,4 +339,6 @@ regularizer_lookup = dict(
     norm=NormRegularization,
     deep_inversion=DeepInversion,
     features=FeatureRegularization,
+    image_prior=ImagePrior,
+    patch_prior=PatchPrior,
 )
