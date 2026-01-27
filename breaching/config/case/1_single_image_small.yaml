@@ -6,10 +6,10 @@ defaults:
   - server: honest-but-curious
   - user: local_gradient
   - _self_
-model: vit_small
+model: vit_custom
 
 user:
-  provide_labels: True
+  provide_labels: False
 
 # Server and user:
 num_queries: 1

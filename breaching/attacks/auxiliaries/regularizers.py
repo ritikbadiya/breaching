@@ -238,16 +238,19 @@ class DeepInversion(torch.nn.Module):
     def __repr__(self):
         return f"Deep Inversion Regularization (matching batch norms), scale={self.scale}, first-bn-mult={self.first_bn_multiplier}"
 
-class ImagePrior(DeepInversion):
+class ImagePrior(torch.nn.Module):
     """Implements the ImagePrior regularization as used in Grad-ViT. 
     Compare the BN stats with MoCoV2 pretrained ResNet50 features.
     Different from the one implemented in DeepInversion and STG."""
-    def __init__(self, setup, scale=0.1, first_bn_multiplier=10):
-        super().__init__(setup, scale, first_bn_multiplier)
+    def __init__(self, setup, scale=0.1, first_bn_multiplier=10, max_iters = 120000):
+        super().__init__()
         self.setup = setup
         self.scale = scale
-        self.moco = torch.hub.load('facebookresearch/moco:main', 'moco_v2_resnet50')
-        # self.moco = torch.hub.load_state_dict_from_url(MOCOV2_RESNET50_URL)
+        self.step = 0
+        self.max_iters = max_iters
+        self.first_bn_multiplier = first_bn_multiplier
+        # self.moco = torch.hub.load('facebookresearch/moco:main', 'moco_v2_resnet50')
+        self.moco = torch.hub.load_state_dict_from_url(MOCOV2_RESNET50_URL)
         self.moco.eval()
 
     def initialize(self, models, *args, **kwargs):
@@ -257,6 +260,17 @@ class ImagePrior(DeepInversion):
         for module in self.moco.modules():
             if isinstance(module, torch.nn.BatchNorm2d):
                 self.losses.append(DeepInversionFeatureHook(module))
+    
+    def forward(self, tensor, *args, **kwargs):
+        if self.step < self.max_iters//2:
+            self.step += 1
+            return 0.0
+        else:
+            rescale = [self.first_bn_multiplier] + [1.0 for _ in range(len(self.losses[0]) - 1)]
+            feature_reg = 0
+            for loss in self.losses:
+                feature_reg += sum([mod.r_feature * rescale[idx] for (idx, mod) in enumerate(loss)])
+            return self.scale * feature_reg
 
     def __repr__(self):
         return f"Image Prior Regularization with MoCoV2 pretrained ResNet50, scale={self.scale}"
@@ -331,6 +345,22 @@ class PatchPrior(torch.nn.Module):
     def __repr__(self):
         return f"Patch Prior Total Variation, scale={self.scale}, patch_size={self.patch_size}, p={self.inner_exp} q={self.outer_exp}. {'Color TV: double oppponents' if self.double_opponents else ''}"
 
+class GroupRegularization(torch.nn.Module):
+    """Group regularization placeholder - not implemented."""
+
+    def __init__(self, setup, scale=0.1):
+        super().__init__()
+        self.setup = setup
+        self.scale = scale
+
+    def initialize(self, models, *args, **kwargs):
+        pass
+
+    def forward(self, tensor, *args, **kwargs):
+        return 0
+
+    def __repr__(self):
+        return f"Group regularization placeholder - not implemented, scale={self.scale}"
 
 
 regularizer_lookup = dict(
