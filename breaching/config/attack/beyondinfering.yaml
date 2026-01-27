@@ -1,5 +1,4 @@
-# This is the attack of Wang et al. "Beyond Inferring Class Representatives: User-Level
-# Privacy Leakage From Federated Learning"
+# This is the attack of Wang et al. "Beyond Inferring Class Representatives: User-Level Privacy Leakage From Federated Learning"
 # However currently still without the multitask-GAN employed therein for refinement
 
 defaults:
