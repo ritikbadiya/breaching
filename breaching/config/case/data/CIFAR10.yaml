@@ -2,7 +2,7 @@ name: CIFAR10
 modality: vision
 task: classification
 
-path: "~/data"
+path: "./dataset"
 size: 50_000
 classes: 10
 shape:

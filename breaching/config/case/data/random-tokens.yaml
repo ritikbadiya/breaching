@@ -6,7 +6,7 @@ task: causal-lm # masked-lm / causal-lm
 mlm_probability: 0.15
 disable_mlm: False
 
-path: "~/data"
+path: "./dataset"
 size: 512
 shape:
   - 32 # This is sequence_length
