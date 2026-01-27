@@ -253,6 +253,7 @@ class ImagePrior(torch.nn.Module):
         moco_state_dict = torch.hub.load_state_dict_from_url(MOCOV2_RESNET50_URL, map_location='cpu', progress=True)['state_dict']
         self.moco = torchvision.models.resnet50(pretrained = False)
         self.moco.load_state_dict({k.replace('module.encoder_q.',''): v for k, v in moco_state_dict.items() if k.startswith('module.encoder_q') and not k.startswith('module.encoder_q.fc')}, strict = False)
+        self.moco.to(setup['device'])
         self.moco.eval()
 
     def initialize(self, models, *args, **kwargs):
@@ -275,7 +276,7 @@ class ImagePrior(torch.nn.Module):
                 tensor = tensor.repeat(1,3,1,1)
             if H < 32 and W < 32:
                 tensor = torch.nn.functional.interpolate(tensor, size=(32,32), mode='bilinear', align_corners=False)
-                
+
             _ = self.moco(tensor)
             rescale = [self.first_bn_multiplier] + [1.0 for _ in range(len(self.losses) - 1)]
             feature_reg = sum([mod.r_feature * rescale[idx] for (idx, mod) in enumerate(self.losses)])
