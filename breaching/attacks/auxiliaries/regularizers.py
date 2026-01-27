@@ -268,6 +268,14 @@ class ImagePrior(torch.nn.Module):
             self.step += 1
             return 0.0
         else:
+            self.step += 1
+            #### To handle MNIST-like images ####
+            B, C, H, W = tensor.shape
+            if C==1:
+                tensor = tensor.repeat(1,3,1,1)
+            if H < 32 and W < 32:
+                tensor = torch.nn.functional.interpolate(tensor, size=(32,32), mode='bilinear', align_corners=False)
+                
             _ = self.moco(tensor)
             rescale = [self.first_bn_multiplier] + [1.0 for _ in range(len(self.losses) - 1)]
             feature_reg = sum([mod.r_feature * rescale[idx] for (idx, mod) in enumerate(self.losses)])
