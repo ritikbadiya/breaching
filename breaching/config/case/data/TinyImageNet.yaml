@@ -2,7 +2,7 @@ name: TinyImageNet
 modality: vision
 task: classification
 
-path: "./dataset"
+path: "${hydra:runtime.cwd}/breaching/dataset"
 size: 100_000
 classes: 200
 shape:

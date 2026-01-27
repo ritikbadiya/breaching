@@ -6,7 +6,7 @@ task: classification
 mlm_probability: 0.15
 disable_mlm: False
 
-path: "./dataset"
+path: "${hydra:runtime.cwd}/breaching/dataset"
 size: 8551 # rows in training
 
 classes: 2
