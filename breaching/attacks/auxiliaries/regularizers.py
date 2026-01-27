@@ -1,7 +1,7 @@
 """Various regularizers that can be re-used for multiple attacks."""
 
 import torch
-
+import torchvision
 from .deepinversion import DeepInversionFeatureHook
 
 MOCOV2_RESNET50_URL = "https://dl.fbaipublicfiles.com/moco/moco_checkpoints/moco_v2_800ep/moco_v2_800ep_pretrain.pth.tar"
@@ -249,8 +249,10 @@ class ImagePrior(torch.nn.Module):
         self.step = 0
         self.max_iters = max_iters
         self.first_bn_multiplier = first_bn_multiplier
-        # self.moco = torch.hub.load('facebookresearch/moco:main', 'moco_v2_resnet50')
-        self.moco = torch.hub.load_state_dict_from_url(MOCOV2_RESNET50_URL)
+        # self.moco = torch.hub.load('facebookresearch/moco:main', 'moco_v2_resnet50', force_reload=True)
+        moco_state_dict = torch.hub.load_state_dict_from_url(MOCOV2_RESNET50_URL, map_location='cpu', progress=True)['state_dict']
+        self.moco = torchvision.models.resnet50(pretrained = False)
+        self.moco.load_state_dict({k.replace('module.encoder_q.',''): v for k, v in moco_state_dict.items() if k.startswith('module.encoder_q') and not k.startswith('module.encoder_q.fc')}, strict = False)
         self.moco.eval()
 
     def initialize(self, models, *args, **kwargs):
@@ -266,10 +268,9 @@ class ImagePrior(torch.nn.Module):
             self.step += 1
             return 0.0
         else:
-            rescale = [self.first_bn_multiplier] + [1.0 for _ in range(len(self.losses[0]) - 1)]
-            feature_reg = 0
-            for loss in self.losses:
-                feature_reg += sum([mod.r_feature * rescale[idx] for (idx, mod) in enumerate(loss)])
+            _ = self.moco(tensor)
+            rescale = [self.first_bn_multiplier] + [1.0 for _ in range(len(self.losses) - 1)]
+            feature_reg = sum([mod.r_feature * rescale[idx] for (idx, mod) in enumerate(self.losses)])
             return self.scale * feature_reg
 
     def __repr__(self):
@@ -288,6 +289,9 @@ class PatchPrior(torch.nn.Module):
         self.outer_exp = outer_exp
         self.eps = eps
         self.double_opponents = double_opponents
+
+    def initialize(self, models, *args, **kwargs):
+        pass
 
     def total_variation_patches(self, x, P=16):
         """Patch-based anisotropic TV computed on patch boundaries.

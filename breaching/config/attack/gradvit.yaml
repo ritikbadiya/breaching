@@ -24,13 +24,13 @@ optim:
   callback: 1000 # Print objective value every callback many iterations
 
 regularization:
-  # image_prior:
-  #   scale: 0.2
-  #   max_iters: 20000
-  #   first_bn_multiplier: 10
-  # patch_prior:
-  #   scale: 1e-4
-  #   patch_size: 14
+  image_prior:
+    scale: 0.2
+    max_iters: 20000
+    first_bn_multiplier: 10
+  patch_prior:
+    scale: 1e-4
+    patch_size: 14
   total_variation:
     scale: 1e-4
     # 0.2 # The old version did not take the mean dx + dy as the new version, so this corresponds to 0.1 in the old repo
