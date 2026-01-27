@@ -1,6 +1,6 @@
 outputs
 logs/
-data/
+dataset/
 tables/*/*.csv
 tables/*/*.csv#
 tables/*.csv
