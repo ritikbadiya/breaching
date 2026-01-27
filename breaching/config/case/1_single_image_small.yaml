@@ -9,7 +9,7 @@ defaults:
 model: vit_custom
 
 user:
-  provide_labels: False
+  provide_labels: True
 
 # Server and user:
 num_queries: 1

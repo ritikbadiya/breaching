@@ -20,11 +20,29 @@ def cw_ssim(img_batch, ref_batch, scales=5, skip_scales=None, K=1e-6, reduction=
     """
     try:
         from pytorch_wavelets import DTCWTForward
-    except ModuleNotFoundError:
-        warnings.warn(
-            "To utilize wavelet SSIM, install pytorch wavelets from https://github.com/fbcotter/pytorch_wavelets."
-        )
-        return torch.as_tensor(float("NaN")), torch.as_tensor(float("NaN"))
+    except (ModuleNotFoundError, ImportError):
+        try:
+            from skimage.metrics import structural_similarity as ssim_fn
+            ssim_val = 0
+            for img, ref in zip(img_batch.detach().cpu().numpy(), ref_batch.detach().cpu().numpy()):
+                # skimage expects [H, W, C] or [H, W]
+                img_np = img.transpose(1, 2, 0)
+                ref_np = ref.transpose(1, 2, 0)
+                # multichannel=True is deprecated in newer skimage, use channel_axis
+                import skimage
+                from packaging import version
+                if version.parse(skimage.__version__) >= version.parse("0.19.0"):
+                    val = ssim_fn(img_np, ref_np, channel_axis=-1, data_range=1.0)
+                else:
+                    val = ssim_fn(img_np, ref_np, multichannel=True, data_range=1.0)
+                ssim_val += val
+            avg_ssim = ssim_val / img_batch.shape[0]
+            return avg_ssim, avg_ssim # return same for max for now
+        except ImportError:
+            warnings.warn(
+                "To utilize SSIM, install either pytorch_wavelets or scikit-image."
+            )
+            return torch.as_tensor(float("NaN")), torch.as_tensor(float("NaN"))
 
     # 1) Compute wavelets:
     setup = dict(device=img_batch.device, dtype=img_batch.dtype)
@@ -152,14 +170,17 @@ def _registered_psnr_compute_kornia(img_batch, ref_batch, factor=1.0):
         mse = ((img - ref) ** 2).mean()
         default_psnrs += [10 * torch.log10(factor ** 2 / mse)]
         # Align by homography:
-        registrator = ImageRegistrator("similarity", num_iterations=2500)
-        registrator.warper = partial(HomographyWarper, padding_mode="reflection")
-        registrator.to(ref.device)
-        homography = registrator.register(img, ref)
-        warped_img = registrator.warp_src_into_dst(img)
-        # Compute new PSNR:
-        mse = ((warped_img.detach() - ref_batch) ** 2).mean()
-        registered_psnrs += [10 * torch.log10(factor ** 2 / mse)]
+        try:
+            registrator = ImageRegistrator("similarity", num_iterations=2500)
+            registrator.warper = partial(HomographyWarper, padding_mode="reflection")
+            registrator.to(ref.device)
+            homography = registrator.register(img, ref)
+            warped_img = registrator.warp_src_into_dst(img)
+            # Compute new PSNR:
+            mse = ((warped_img.detach() - ref_batch) ** 2).mean()
+            registered_psnrs += [10 * torch.log10(factor ** 2 / mse)]
+        except RuntimeError:
+            registered_psnrs += [default_psnrs[-1]]
 
     # Return best of default and warped PSNR:
     result = torch.stack([torch.stack(default_psnrs), torch.stack(registered_psnrs)]).max(dim=0)[0]

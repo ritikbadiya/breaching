@@ -17,7 +17,7 @@ optim:
   optimizer: adam
   signed:
   step_size: 0.1
-  boxed: True
+  boxed: False
   max_iterations: 1500
   step_size_decay: step-lr
 

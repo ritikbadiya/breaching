@@ -3,7 +3,15 @@ Control script to launch some attack that attempts to breach privacy federated l
 with the overall goal of recovering user data, e.g. image data, directly as much as possible.
 """
 
+# Set SDPA kernel preferences BEFORE importing torch modules
 import torch
+# torch.backends.cuda.enable_flash_sdp(False)
+# torch.backends.cuda.enable_mem_efficient_sdp(False)
+# torch.backends.cuda.enable_math_sdp(True)
+
+# Also set CUDA backend preferences to ensure math kernel is used
+# torch.set_float32_matmul_precision('highest')
+
 import hydra
 from omegaconf import OmegaConf
 

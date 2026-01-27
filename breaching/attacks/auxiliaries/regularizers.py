@@ -73,7 +73,7 @@ class LinearLayerRegularization(torch.nn.Module):
         self.measured_features = []
         self.refs = [list() for model in models]
 
-        for idx, (model, user_data) in enumerate(zip(models, shared_data)):
+        for idx, (model, user_data) in enumerate(zip(models, gradient_data)):
             # 1) Find linear layers:
             linear_layers = []
             for name, module in model.named_modules():
@@ -313,7 +313,7 @@ class PatchPrior(torch.nn.Module):
         per_sample = x.new_zeros((B,))
 
         # Vertical boundaries (along height): compare rows P*k-1 and P*k
-        n_vert = H // P
+        n_vert = int(H) // P
         for k in range(1, n_vert):
             a = x[:, :, P * k, :].reshape(B, -1)       # shape (B, C*W)
             b = x[:, :, P * k - 1, :].reshape(B, -1)   # shape (B, C*W)
@@ -322,7 +322,7 @@ class PatchPrior(torch.nn.Module):
             per_sample = per_sample + norms
 
         # Horizontal boundaries (along width): compare cols P*k-1 and P*k
-        n_horiz = W // P
+        n_horiz = int(W) // P
         for k in range(1, n_horiz):
             a = x[:, :, :, P * k].reshape(B, -1)      # shape (B, C*H)
             b = x[:, :, :, P * k - 1].reshape(B, -1)  # shape (B, C*H)
