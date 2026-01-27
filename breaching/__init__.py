@@ -1,5 +1,16 @@
 """Initialize breaching library :>"""
 
+# Disable optimized SDPA kernels for compatibility with older GPUs (RTX 2080 Ti, etc.)
+# This prevents "derivative for aten::_scaled_dot_product_efficient_attention_backward is not implemented" errors
+# Force use of the stable math SDP kernel which supports backward passes on all GPUs
+import torch
+# torch.backends.cuda.enable_flash_sdp(False)
+# torch.backends.cuda.enable_mem_efficient_sdp(False)
+# torch.backends.cuda.enable_math_sdp(True)
+
+# # Also set CUDA backend preferences to ensure math kernel is used
+# torch.set_float32_matmul_precision('highest')
+
 from breaching import analysis
 from breaching import attacks
 from breaching import cases
