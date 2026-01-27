@@ -2,7 +2,7 @@ name: CIFAR100
 modality: vision
 task: classification
 
-path: "./dataset"
+path: "${hydra:runtime.cwd}/breaching/dataset"
 size: 50_000
 classes: 100
 shape:

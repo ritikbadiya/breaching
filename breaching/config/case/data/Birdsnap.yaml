@@ -2,7 +2,7 @@ name: Birdsnap
 modality: vision
 task: classification
 
-path: "./dataset"
+path: "${hydra:runtime.cwd}/breaching/dataset"
 size: 49829
 classes: 500
 shape:

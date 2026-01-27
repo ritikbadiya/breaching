@@ -234,7 +234,7 @@ class EuclideanGradCosSimPosEmbed(GradientLoss):
     def _euclidean(gradient_rec: List[torch.Tensor], gradient_data: List[torch.Tensor]):
         objective = gradient_rec[0].new_zeros(1,)
         for rec, data in zip(gradient_rec, gradient_data):
-            objective += (rec - data).pow(2).sum()
+            objective += (rec - data).pow(2).mean()
         return objective
 
     @staticmethod

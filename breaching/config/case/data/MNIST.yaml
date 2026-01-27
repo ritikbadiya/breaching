@@ -2,7 +2,7 @@ name: MNIST
 modality: vision
 task: classification
 
-path: "./dataset"
+path: "${hydra:runtime.cwd}/breaching/dataset"
 size: 60_000
 classes: 10
 shape:
