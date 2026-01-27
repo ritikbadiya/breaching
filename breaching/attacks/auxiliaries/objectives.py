@@ -85,8 +85,14 @@ class Euclidean(GradientLoss):
         super().__init__()
         self.scale = scale
         self.task_regularization = task_regularization
+        self.step = 0
+        self.max_iters = kwargs.get("max_iters", None)
+        log.info(f"Euclidean regularizer max iters: {self.max_iters}")
 
     def gradient_based_loss(self, gradient_rec, gradient_data):
+        self.step += 1
+        if self.max_iters is not None and self.step > self.max_iters // 2:
+            return self._euclidean(gradient_rec, gradient_data) * self.scale // 2
         return self._euclidean(gradient_rec, gradient_data) * self.scale
 
     def __repr__(self):

@@ -1,12 +1,13 @@
 defaults:
   - _default_optimization_attack
   - _self_
-type: invertinggradients
+type: gradvit
 label_strategy: yin
 
 objective:
   type: euclidean
   scale: 4e-3 # need to have a much smaller scale like 0.0001 for euclidean objectives
+  max_iters: optim.max_iterations
 
 restarts:
   num_trials: 1
@@ -18,11 +19,18 @@ optim:
   step_size: 0.1
   boxed: True
   max_iterations: 120_000
-  step_size_decay: step-lr
+  step_size_decay: cosine-decay
 
   callback: 1000 # Print objective value every callback many iterations
 
 regularization:
+  image_prior:
+    scale: 0.2
+    max_iters: optim.max_iterations
+    first_bn_multiplier: 10
+  patch_prior:
+    scale: 1e-4
+    patch_size: 14
   total_variation:
     scale: 1e-4
     # 0.2 # The old version did not take the mean dx + dy as the new version, so this corresponds to 0.1 in the old repo
@@ -31,11 +39,7 @@ regularization:
   norm:
     scale: 1e-4
     pnorm: 2
-  image_prior:
-    scale: 0.2
-  patch_prior:
-    scale: 1e-4
-    patch_size: 14
+  
   # group_regularization: # Not implemented.
   #  scale: 0.01
 
