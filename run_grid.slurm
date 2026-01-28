@@ -25,7 +25,7 @@ echo "Grid master started on $(hostname) at $(date)"
 echo "Working directory: $(pwd)"
 
 # Load Python module
-module load python3.10
+# module load cuda/12.4
 
 # -----------------------------------------------------------------------------
 # 1. Define the grid
@@ -56,13 +56,14 @@ for ss in "${STEP_SIZES[@]}"; do
                 --cpus-per-task=4 \
                 --output="slurm_logs/%x_%j.out" \
                 --error="slurm_logs/%x_%j.err" \
-                --wrap="python benchmark_breaches.py \
+                --wrap="bash -lc 'module load conda/3.12 && \
+                        conda run -n breaching python benchmark_breaches.py \
                         case=1_single_image_small \
                         attack=gradvit \
                         attack.optim.step_size=${ss} \
                         attack.regularization.total_variation.scale=${tv} \
                         attack.regularization.patch_prior.scale=${ps} \
-                        dryrun=True" \
+                        dryrun=True'" \
                 | awk '{print $4}')
 
             if [[ -z "${JOBID}" ]]; then
