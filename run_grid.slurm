@@ -12,9 +12,8 @@
 
 #SBATCH --job-name=grid_master
 #SBATCH --partition=long
-#SBATCH --time=01:00:00
 #SBATCH --mem=16G
-#SBATCH --cpus-per-task=1
+#SBATCH --cpus-per-task=4
 #SBATCH --output=slurm_logs/master_%j.out
 #SBATCH --error=slurm_logs/master_%j.err
 
@@ -25,7 +24,7 @@ echo "Grid master started on $(hostname) at $(date)"
 echo "Working directory: $(pwd)"
 
 # Load Python module
-# module load cuda/12.4
+module load conda/3.12
 
 # -----------------------------------------------------------------------------
 # 1. Define the grid
@@ -47,31 +46,32 @@ for ss in "${STEP_SIZES[@]}"; do
 
             echo "Submitting job $count: $JOB_NAME"
 
-            JOBID=$(sbatch \
-                --job-name="$JOB_NAME" \
-                --partition=long \
-                --gres=gpu:1 \
-                --time=04:00:00 \
-                --mem=16G \
-                --cpus-per-task=4 \
-                --output="slurm_logs/%x_%j.out" \
-                --error="slurm_logs/%x_%j.err" \
-                --wrap="bash -lc 'module load conda/3.12 && \
-                        conda run -n breaching python benchmark_breaches.py \
+            # JOBID=$(sbatch \
+            #     --job-name="$JOB_NAME" \
+            #     --partition=long \
+            #     --gres=gpu:1 \
+            #     --time=04:00:00 \
+            #     --mem=16G \
+            #     --cpus-per-task=4 \
+            #     --output="slurm_logs/%x_%j.out" \
+            #     --error="slurm_logs/%x_%j.err" \
+            #     --wrap="bash -lc 'module load conda/3.12 && \
+                        
+            #     | awk '{print $4}')
+            conda run python benchmark_breaches.py \
                         case=1_single_image_small \
                         attack=gradvit \
                         attack.optim.step_size=${ss} \
                         attack.regularization.total_variation.scale=${tv} \
                         attack.regularization.patch_prior.scale=${ps} \
-                        dryrun=True'" \
-                | awk '{print $4}')
+                        dryrun=True
 
-            if [[ -z "${JOBID}" ]]; then
-                echo "❌ Submission failed for $JOB_NAME"
-                exit 1
-            fi
+            # if [[ -z "${JOBID}" ]]; then
+            #     echo "❌ Submission failed for $JOB_NAME"
+            #     exit 1
+            # fi
 
-            echo "✅ Submitted $JOB_NAME as JobID=${JOBID}"
+            # echo "✅ Submitted $JOB_NAME as JobID=${JOBID}"
             count=$((count + 1))
 
         done
