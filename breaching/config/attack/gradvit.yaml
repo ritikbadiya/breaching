@@ -6,8 +6,8 @@ label_strategy: yin
 
 objective:
   type: euclidean
-  scale: 4e-3 # need to have a much smaller scale like 0.0001 for euclidean objectives
-  max_iters: 20000
+  scale: 1e-4 # need to have a much smaller scale like 0.0001 for euclidean objectives
+  max_iters: 20_000
 
 restarts:
   num_trials: 1
@@ -24,10 +24,10 @@ optim:
   callback: 1000 # Print objective value every callback many iterations
 
 regularization:
-  # image_prior:
-  #   scale: 0.2
-  #   max_iters: 20000
-  #   first_bn_multiplier: 10
+  image_prior:
+    scale: 0.2
+    max_iters: 20_000
+    first_bn_multiplier: 1.0
   patch_prior:
     scale: 1e-4
     patch_size: 14
