@@ -24,6 +24,9 @@ set -x
 echo "Grid master started on $(hostname) at $(date)"
 echo "Working directory: $(pwd)"
 
+# Load Python module
+module load python3.10
+
 # -----------------------------------------------------------------------------
 # 1. Define the grid
 # -----------------------------------------------------------------------------
@@ -46,7 +49,7 @@ for ss in "${STEP_SIZES[@]}"; do
 
             JOBID=$(sbatch \
                 --job-name="$JOB_NAME" \
-                --partition=gpu \
+                --partition=long \
                 --gres=gpu:1 \
                 --time=04:00:00 \
                 --mem=16G \
