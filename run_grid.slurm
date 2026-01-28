@@ -24,7 +24,7 @@ echo "Grid master started on $(hostname) at $(date)"
 echo "Working directory: $(pwd)"
 
 # Load Python module
-module load conda/3.12
+module load cuda/12.4
 
 # -----------------------------------------------------------------------------
 # 1. Define the grid
@@ -58,7 +58,7 @@ for ss in "${STEP_SIZES[@]}"; do
             #     --wrap="bash -lc 'module load conda/3.12 && \
                         
             #     | awk '{print $4}')
-            conda run python benchmark_breaches.py \
+            python benchmark_breaches.py \
                         case=1_single_image_small \
                         attack=gradvit \
                         attack.optim.step_size=${ss} \
