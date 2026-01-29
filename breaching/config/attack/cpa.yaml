@@ -29,15 +29,12 @@ regularization:
     inner_exp: 1
     outer_exp: 1
     stage: 1
-  feature_regularization:
-    scale: 1.0
-    stage: 1
-  mutual_information:
-    scale: 1.0
-    stage: 0
-  sign_regularization:
-    scale: 1.0
-    stage: 0
-  source_prior: # Same as TV as mentioned in paper
-    scale: 1.0
-    stage: 0
+  ica_features:
+    scale: 0.2
+
+ica_regularization:
+  mi_regularization:
+    scale: 0.2
+  l1_regularization:
+    scale: 0.2
+
