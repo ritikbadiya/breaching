@@ -99,7 +99,7 @@ for bs in "${BATCH_SIZES[@]}"; do
                     save_reconstruction=true \
                     dryrun=False \
                     job_name="${JOB_NAME}" \
-                    num_trials=1
+                    num_trials=10
 
             count=$((count + 1))
 
