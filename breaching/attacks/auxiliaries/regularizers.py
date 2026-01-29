@@ -20,6 +20,65 @@ class _LinearFeatureHook:
     def close(self):
         self.hook.remove()
 
+class L1Regularization(torch.nn.Module):
+    """L1 regularization implemented for the last linear layer at the end."""
+
+    def __init__(self, setup, scale=0.1):
+        super().__init__()
+        self.setup = setup
+        self.scale = scale
+    
+    def initialize(self, models, shared_data, labels, *args, **kwargs):
+        pass
+
+    def forward(self, tensor, *args, **kwargs):
+        return torch.abs(tensor).mean() * self.scale
+
+class MIRegularization(torch.nn.Module):
+    """Mutual information regularization implemented for the last linear layer at the end."""
+
+    def __init__(self, setup, scale=0.1):
+        super().__init__()
+        self.setup = setup
+        self.scale = scale
+    
+    def initialize(self, models, shared_data, labels, *args, **kwargs):
+        pass
+
+    def forward(self, tensor, *args, **kwargs):
+        pass
+
+    def __repr__(self):
+        return f"Mutual information regularization (Cocktail Party Attack), scale={self.scale}"        
+
+class ICAFeatureRegularization(torch.nn.Module):
+    """Feature regularization implemented for the last linear layer at the end."""
+
+    def __init__(self, setup, scale=0.1):
+        super().__init__()
+        self.setup = setup
+        self.scale = scale
+    
+    def calculate_cosh(self, tensor):
+        return torch.cosh(tensor).mean()
+
+    def initialize(self, models, shared_data, labels, *args, **kwargs):
+        self.refs = [None for model in models]
+        for idx, model in enumerate(models):
+            for name, module in model.named_modules():
+                # Keep only the last linear layer here:
+                # enumerating over name essential for ViT as the attention layers are also nn.Linear
+                if isinstance(module, torch.nn.Linear) and 'head' in name:
+                    self.refs[idx] = _LinearFeatureHook(module)
+
+    def forward(self, tensor, *args, **kwargs):
+        regularization_value = 0
+        for ref, measured_val in zip(self.refs, tensor):
+            regularization_value += torch.nn.functional.mse_loss(ref.features, measured_val)
+        return regularization_value * self.scale
+
+    def __repr__(self):
+        return f"ICA feature space regularization (Cocktail Party Attack), scale={self.scale}"        
 
 class FeatureRegularization(torch.nn.Module):
     """Feature regularization implemented for the last linear layer at the end."""
@@ -46,9 +105,10 @@ class FeatureRegularization(torch.nn.Module):
 
         self.refs = [None for model in models]
         for idx, model in enumerate(models):
-            for module in model.modules():
+            for name, module in model.named_modules():
                 # Keep only the last linear layer here:
-                if isinstance(module, torch.nn.Linear):
+                # enumerating over name essential for ViT as the attention layers are also nn.Linear
+                if isinstance(module, torch.nn.Linear) and 'head' in name:
                     self.refs[idx] = _LinearFeatureHook(module)
 
     def forward(self, tensor, *args, **kwargs):
