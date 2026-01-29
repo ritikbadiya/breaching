@@ -361,19 +361,69 @@ class PatchPrior(torch.nn.Module):
 class GroupRegularization(torch.nn.Module):
     """Group regularization placeholder - not implemented."""
 
-    def __init__(self, setup, scale=0.1):
+    def __init__(self, setup, scale=0.1, aligner=None, x_list=None, warmup_iters=0):
         super().__init__()
         self.setup = setup
         self.scale = scale
+        self.aligner = aligner
+        self.x_list = x_list
+        self.warmup_iters = warmup_iters
+        self.iter = 0
+
+    def compute_mean(self, x_list):
+    # x_list: list of tensors, each (B, C, H, W)
+        return torch.stack(x_list, dim=0).mean(dim=0)
 
     def initialize(self, models, *args, **kwargs):
-        pass
+        self.iter = 0
+
+    @torch.no_grad()
+    def compute_consensus(self, x_list):
+        """
+        Compute final consensus x_C by:
+        1) computing mean x_m
+        2) aligning each x_s to x_m
+        3) averaging aligned results
+        """
+
+        x_m = self.compute_mean(x_list)
+
+        aligned = []
+        for x_s in x_list:
+            x_s_aligned = self.aligner(x_s, x_m)
+            aligned.append(x_s_aligned)
+
+        x_C = torch.stack(aligned, dim=0).mean(dim=0)
+        return x_C
 
     def forward(self, tensor, *args, **kwargs):
-        return 0
+        """
+        tensor: current reconstruction x̂
+        expects:
+            self.x_list = list of all candidate reconstructions
+        """
+        self.iter += 1
+
+        # warmup: don't apply consensus too early
+        if self.iter < self.warmup_iters:
+            return tensor.new_tensor(0.0)
+
+        if self.x_list is None or len(self.x_list) < 2:
+            return tensor.new_tensor(0.0)
+
+        # compute consensus (no gradients through alignment)
+        with torch.no_grad():
+            x_C = self.compute_consensus(self.x_list)
+
+        # L2 penalty to consensus
+        reg = torch.mean((tensor - x_C)**2)
+        return self.scale*reg
 
     def __repr__(self):
-        return f"Group regularization placeholder - not implemented, scale={self.scale}"
+        return (
+            f"Group (Consensus) Regularization via RANSAC-Flow, "
+            f"scale={self.scale}, warmup={self.warmup_iters}"
+        )
 
 
 regularizer_lookup = dict(
@@ -384,4 +434,5 @@ regularizer_lookup = dict(
     features=FeatureRegularization,
     image_prior=ImagePrior,
     patch_prior=PatchPrior,
+    group_regularization=GroupRegularization
 )
