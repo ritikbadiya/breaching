@@ -23,12 +23,6 @@ def main_process(process_idx, local_group_size, cfg, num_trials=100, job_name=No
     """This function controls the central routine."""
     total_time = time.time()  # Rough time measurements here
     setup = breaching.utils.system_startup(process_idx, local_group_size, cfg)
-    
-    # Create job-specific output directory if job_name is provided
-    if job_name:
-        job_output_dir = os.path.join("outputs", job_name)
-        os.makedirs(job_output_dir, exist_ok=True)
-        log.info(f"Using job-specific output directory: {job_output_dir}")
     model, loss_fn = breaching.cases.construct_model(cfg.case.model, cfg.case.data, cfg.case.server.pretrained)
 
     if cfg.num_trials is not None:
