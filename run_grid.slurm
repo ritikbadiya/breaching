@@ -12,9 +12,10 @@
 #SBATCH --job-name=inverting_gradients_grid_master
 #SBATCH --output=slurm_logs/master_%j.out
 #SBATCH --error=slurm_logs/master_%j.err
-#SBATCH --partition=long
+#SBATCH --partition=ada
+#SBATCH --nodelist=cn9
 #SBATCH --gres=gpu:1
-#SBATCH --mem=16G
+#SBATCH --mem=32G
 #SBATCH --cpus-per-task=4
 
 # echo "Grid master started on $(hostname) at $(date)"
@@ -68,9 +69,9 @@ ATTACK=invertinggradients
 # -----------------------------------------------------------------------------
 # 1. Define the grid
 # -----------------------------------------------------------------------------
-BATCH_SIZES=(1)
+BATCH_SIZES=(1 4 16 32)
 STEP_SIZES=(0.1 0.25 0.5 1.0)
-TV_SCALES=(0.01 0.1 1.0)
+TV_SCALES=(0.01 0.1 0.2 0.5 1.0)
 # PATCH_SCALES=(0.1)
 
 # -----------------------------------------------------------------------------
@@ -99,7 +100,7 @@ for bs in "${BATCH_SIZES[@]}"; do
                     save_reconstruction=true \
                     dryrun=False \
                     job_name="${JOB_NAME}" \
-                    num_trials=10
+                    num_trials=3
 
             count=$((count + 1))
 
