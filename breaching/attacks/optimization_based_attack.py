@@ -15,6 +15,8 @@ from .base_attack import _BaseAttacker
 from .auxiliaries.regularizers import regularizer_lookup, TotalVariation
 from .auxiliaries.objectives import Euclidean, CosineSimilarity, objective_lookup
 from .auxiliaries.augmentations import augmentation_lookup
+from .auxiliaries.aligners import RANSACHomographyAligner
+from breaching.attacks.auxiliaries.aligners import RANSACHomographyAligner, build_feature_net
 
 import logging
 
@@ -26,6 +28,15 @@ class OptimizationBasedAttacker(_BaseAttacker):
 
     def __init__(self, model, loss_fn, cfg_attack, setup=dict(dtype=torch.float, device=torch.device("cpu"))):
         super().__init__(model, loss_fn, cfg_attack, setup)
+
+        self.aligner = None
+        if "group_regularization" in getattr(self.cfg, "regularization", {}):
+            feat_net = build_feature_net(self.setup["device"])
+
+            self.aligner = RANSACHomographyAligner(
+                netFeatCoarse=feat_net,
+                device=self.setup["device"]
+            )
         objective_fn = objective_lookup.get(self.cfg.objective.type)
         log.info(f"Using objective function: {self.cfg.objective}")
         if objective_fn is None:
@@ -72,6 +83,7 @@ class OptimizationBasedAttacker(_BaseAttacker):
                 candidate_solutions += [
                     self._run_trial(rec_models, shared_data, labels, stats, trial, initial_data, dryrun)
                 ]
+                self.candidate_solutions = candidate_solutions
                 scores[trial] = self._score_trial(candidate_solutions[trial], labels, rec_models, shared_data)
         except KeyboardInterrupt:
             print("Trial procedure manually interruped.")
@@ -160,7 +172,13 @@ class OptimizationBasedAttacker(_BaseAttacker):
                 total_objective += objective
                 total_task_loss += task_loss
             for regularizer in self.regularizers:
+                if hasattr(regularizer, "x_list"):
+                    regularizer.x_list = getattr(self, "candidate_solutions", None)
+                if hasattr(regularizer, "aligner") and regularizer.aligner is None:
+                    regularizer.aligner = self.aligner
+
                 total_objective += regularizer(candidate_augmented)
+
 
             if total_objective.requires_grad:
                 total_objective.backward(inputs=candidate, create_graph=False)
