@@ -88,7 +88,7 @@ def initialize_multiprocess_log(cfg):
         cfg.original_cwd = hydra.utils.get_original_cwd()
 
 
-def save_summary(cfg, metrics, stats, local_time, original_cwd=True, table_name="breach"):
+def save_summary(cfg, metrics, stats, local_time, original_cwd=True, table_name="breach", job_name=None):
     """Save two summary tables. A detailed table of iterations/loss+acc and a summary of the end results."""
     # 1) detailed table:
     for step in range(len(stats["train_loss"])):
@@ -123,7 +123,12 @@ def save_summary(cfg, metrics, stats, local_time, original_cwd=True, table_name=
         folder=local_folder,
     )
 
-    location = os.path.join(cfg.original_cwd, "tables") if original_cwd else "tables"
+    # Use job_name in path if provided
+    if job_name:
+        location = os.path.join(cfg.original_cwd, "tables", job_name) if original_cwd else os.path.join("tables", job_name)
+    else:
+        location = os.path.join(cfg.original_cwd, "tables") if original_cwd else "tables"
+    
     save_to_table(location, f"{table_name}_{cfg.case.name}_{cfg.case.data.name}_reports", dryrun=cfg.dryrun, **summary)
 
 

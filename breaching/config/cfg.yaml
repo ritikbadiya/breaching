@@ -20,6 +20,7 @@ hydra:
 
 seed: # Optional: Set initial seed
 name: default # A name for this run [will be used for the summary table and outputs folder]
+job_name: null # Optional: Job-specific name for organizing logs
 
 # debug implementation by running every loop just once:
 dryrun: False
