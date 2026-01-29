@@ -6,7 +6,7 @@ tables/*/*.csv#
 tables/*.csv
 tables/*.csv#
 tables/*.ods
-
+slurm_logs/
 .vs/
 
 *.pdf
