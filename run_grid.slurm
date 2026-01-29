@@ -6,72 +6,101 @@
 # This job itself runs on a low-priority CPU partition.
 #
 # Usage:
-#   mkdir -p slurm_logs
 #   sbatch run_grid.slurm
 # -----------------------------------------------------------------------------
 
-#SBATCH --job-name=grid_master
-#SBATCH --partition=long
-#SBATCH --mem=16G
-#SBATCH --cpus-per-task=4
+#SBATCH --job-name=inverting_gradients_grid_master
 #SBATCH --output=slurm_logs/master_%j.out
 #SBATCH --error=slurm_logs/master_%j.err
+#SBATCH --partition=long
+#SBATCH --gres=gpu:1
+#SBATCH --mem=16G
+#SBATCH --cpus-per-task=4
 
-set -euo pipefail
-set -x
-
-echo "Grid master started on $(hostname) at $(date)"
-echo "Working directory: $(pwd)"
+# echo "Grid master started on $(hostname) at $(date)"
+# echo "Working directory: $(pwd)"
 
 # Load Python module
-module load cuda/12.4
+# module load cuda/12.4
+mkdir -p slurm_logs
+# -----------------------------------------------------------------------------
+# Activate virtual environment (SLURM-safe)
+# -----------------------------------------------------------------------------
 
+echo "Activating virtual environment..."
+
+if [[ -z "${SLURM_SUBMIT_DIR:-}" ]]; then
+    echo "ERROR: SLURM_SUBMIT_DIR is not set"
+    exit 1
+fi
+
+echo "SLURM_SUBMIT_DIR = ${SLURM_SUBMIT_DIR}"
+
+# breaching/ is the submit directory
+BASE_DIR="${SLURM_SUBMIT_DIR}"
+
+# project root is one level above
+PROJECT_ROOT="$(cd "${BASE_DIR}/.." && pwd)"
+
+echo "BASE_DIR     = ${BASE_DIR}"
+echo "PROJECT_ROOT = ${PROJECT_ROOT}"
+
+cd "${PROJECT_ROOT}"
+
+if [[ ! -f bin/activate ]]; then
+    echo "ERROR: Virtual environment not found at ${PROJECT_ROOT}/bin/activate"
+    exit 1
+fi
+
+source bin/activate
+
+# Sanity checks
+which python
+python --version
+
+# Return to breaching
+cd "${BASE_DIR}"
+
+echo "Virtual environment activated successfully."
+
+
+ATTACK=invertinggradients
 # -----------------------------------------------------------------------------
 # 1. Define the grid
 # -----------------------------------------------------------------------------
-STEP_SIZES=(0.1)
-TV_SCALES=(0.01 0.1)
-PATCH_SCALES=(0.1)
+BATCH_SIZES=(1)
+STEP_SIZES=(0.1 0.25 0.5 1.0)
+TV_SCALES=(0.01 0.1 1.0)
+# PATCH_SCALES=(0.1)
 
 # -----------------------------------------------------------------------------
 # 2. Iterate through combinations and submit jobs
 # -----------------------------------------------------------------------------
 count=0
 
-for ss in "${STEP_SIZES[@]}"; do
-    for tv in "${TV_SCALES[@]}"; do
-        for ps in "${PATCH_SCALES[@]}"; do
+for bs in "${BATCH_SIZES[@]}"; do
+    for ss in "${STEP_SIZES[@]}"; do
+        for tv in "${TV_SCALES[@]}"; do
+            # for ps in "${PATCH_SCALES[@]}"; do
 
-            JOB_NAME="gradvit_ss${ss}_tv${tv}_ps${ps}"
+            JOB_NAME="invertinggradients_bs${bs}_ss${ss}_tv${tv}"
 
             echo "Submitting job $count: $JOB_NAME"
 
-            # JOBID=$(sbatch \
-            #     --job-name="$JOB_NAME" \
-            #     --partition=long \
-            #     --gres=gpu:1 \
-            #     --time=04:00:00 \
-            #     --mem=16G \
-            #     --cpus-per-task=4 \
-            #     --output="slurm_logs/%x_%j.out" \
-            #     --error="slurm_logs/%x_%j.err" \
-            #     --wrap="bash -lc 'module load conda/3.12 && \
-                        
-            #     | awk '{print $4}')
             python benchmark_breaches.py \
-                        case=1_single_image_small \
-                        attack=gradvit \
-                        attack.optim.step_size=${ss} \
-                        attack.regularization.total_variation.scale=${tv} \
-                        attack.regularization.patch_prior.scale=${ps} \
-                        dryrun=True
+                    case=1_single_image_small \
+                    case/data=MNIST \
+                    case.model=vit_custom \
+                    case.server.pretrained=False \
+                    case.data.batch_size=${bs} \
+                    attack=${ATTACK} \
+                    attack.optim.step_size=${ss} \
+                    attack.regularization.total_variation.scale=${tv} \
+                    save_reconstruction=true \
+                    dryrun=False \
+                    job_name="${JOB_NAME}" \
+                    num_trials=1
 
-            # if [[ -z "${JOBID}" ]]; then
-            #     echo "❌ Submission failed for $JOB_NAME"
-            #     exit 1
-            # fi
-
-            # echo "✅ Submitted $JOB_NAME as JobID=${JOBID}"
             count=$((count + 1))
 
         done
