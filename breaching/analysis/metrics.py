@@ -295,6 +295,11 @@ def image_identifiability_precision(
                     with torch.inference_mode():
                         rec_input = reconstruction
                         comp_input = comparable_data
+                        if rec_input.ndim == 3:
+                            rec_input = rec_input.unsqueeze(0)
+                        if comp_input.ndim == 3:
+                            comp_input = comp_input.unsqueeze(0)
+
                         if rec_input.shape[-1] < 32:
                             rec_input = torch.nn.functional.interpolate(
                                 rec_input, size=(32, 32), mode="bilinear", align_corners=False

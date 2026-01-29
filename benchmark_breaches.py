@@ -104,8 +104,6 @@ def main_process(process_idx, local_group_size, cfg, num_trials=100, job_name=No
                 if cfg.dryrun:
                     break
             except Exception as e:  # noqa # yeah we're that close to the deadlines
-                import traceback
-                traceback.print_exc()
                 log.info(f"Trial {run} broke down with error {e}.")
             run += 1
 
