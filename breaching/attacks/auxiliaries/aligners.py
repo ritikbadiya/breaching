@@ -67,8 +67,8 @@ def estimate_homography(pts_s, pts_t, Hf, Wf, H, W):
     scale_x = W / Wf
     scale_y = H / Hf
 
-    pts_s = pts_s.copy()
-    pts_t = pts_t.copy()
+    pts_s = pts_s.astype(np.float32)
+    pts_t = pts_t.astype(np.float32)
 
     pts_s[:, 0] *= scale_x
     pts_s[:, 1] *= scale_y

@@ -403,7 +403,6 @@ class GroupRegularization(torch.nn.Module):
             self.x_list = list of all candidate reconstructions
         """
         self.iter += 1
-
         # warmup: don't apply consensus too early
         if self.iter < self.warmup_iters:
             return tensor.new_tensor(0.0)
@@ -414,7 +413,6 @@ class GroupRegularization(torch.nn.Module):
         # compute consensus (no gradients through alignment)
         with torch.no_grad():
             x_C = self.compute_consensus(self.x_list)
-
         # L2 penalty to consensus
         reg = torch.mean((tensor - x_C)**2)
         return self.scale*reg
