@@ -10,7 +10,7 @@ objective:
   max_iters: 20_000
 
 restarts:
-  num_trials: 1
+  num_trials: 3
   scoring: "cosine-similarity"
 
 optim:
