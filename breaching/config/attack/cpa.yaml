@@ -1,8 +1,8 @@
 defaults:
   - _default_optimization_attack
   - _self_
-attack_type: cocktail-party-optimization
-label_strategy: yin
+type: cocktail-party-optimization
+label_strategy: bias-corrected
 
 objective:
   type: cosine-similarity
@@ -15,26 +15,22 @@ restarts:
 optim:
   optimizer: adam
   signed:
-  step_size: 0.1
+  step_size: 0.1  
   boxed: True
-  max_iterations: 24_000
+  max_iterations: 25_000
   step_size_decay: step-lr
 
   callback: 1000 # Print objective value every callback many iterations
 
 regularization:
   total_variation:
-    scale: 0.2
+    scale: 0.1
     # 0.2 # The old version did not take the mean dx + dy as the new version, so this corresponds to 0.1 in the old repo
     inner_exp: 1
     outer_exp: 1
-    stage: 1
   ica_features:
-    scale: 0.2
-
-ica_regularization:
-  mi_regularization:
-    scale: 0.2
-  l1_regularization:
-    scale: 0.2
+    scale: 0.1
+    mi_scale: 0.1
+    sign_scale: 0.1
+    l1_scale: 0.1
 
