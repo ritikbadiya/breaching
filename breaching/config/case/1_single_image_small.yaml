@@ -9,7 +9,8 @@ defaults:
 model: vit_custom
 
 user:
-  provide_labels: True
+  provide_labels: False
+  num_data_points: 4
 
 # Server and user:
 num_queries: 1

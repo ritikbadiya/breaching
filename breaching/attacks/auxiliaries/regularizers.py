@@ -3,6 +3,9 @@
 import torch
 import torchvision
 from .deepinversion import DeepInversionFeatureHook
+import logging
+
+log = logging.getLogger(__name__)
 
 MOCOV2_RESNET50_URL = "https://dl.fbaipublicfiles.com/moco/moco_checkpoints/moco_v2_800ep/moco_v2_800ep_pretrain.pth.tar"
 
@@ -34,8 +37,8 @@ class L1Regularization(torch.nn.Module):
     def forward(self, tensor, *args, **kwargs):
         return torch.abs(tensor).mean() * self.scale
 
-class MIRegularization(torch.nn.Module):
-    """Mutual information regularization implemented for the last linear layer at the end."""
+class SignRegularization(torch.nn.Module):
+    """Sign regularization implemented for the last linear layer at the end."""
 
     def __init__(self, setup, scale=0.1):
         super().__init__()
@@ -46,7 +49,24 @@ class MIRegularization(torch.nn.Module):
         pass
 
     def forward(self, tensor, *args, **kwargs):
+        return torch.mean(torch.minimum(torch.relu(tensor), torch.relu(-tensor))) * self.scale
+
+class MIRegularization(torch.nn.Module):
+    """Mutual information regularization implemented for the last linear layer at the end."""
+
+    def __init__(self, setup, scale=2.0):
+        super().__init__()
+        self.setup = setup
+        self.scale = scale
+    
+    def initialize(self, models, shared_data, labels, *args, **kwargs):
         pass
+
+    def forward(self, tensor, *args, **kwargs):
+        U_norm = torch.nn.functional.normalize(tensor, dim=1)
+        cos = U_norm @ U_norm.T
+        # mask = ~torch.eye(tensor.shape[0], dtype=torch.bool, device=tensor.device)
+        return self.scale * torch.mean(torch.exp(2.0 * torch.abs(cos)))
 
     def __repr__(self):
         return f"Mutual information regularization (Cocktail Party Attack), scale={self.scale}"        
@@ -54,13 +74,43 @@ class MIRegularization(torch.nn.Module):
 class ICAFeatureRegularization(torch.nn.Module):
     """Feature regularization implemented for the last linear layer at the end."""
 
-    def __init__(self, setup, scale=0.1):
+    def __init__(self, setup, scale=0.1, mi_scale=1e-3, sign_scale=1e-3, l1_scale=1e-3):
         super().__init__()
         self.setup = setup
         self.scale = scale
+        self.sign_reg = SignRegularization(setup, sign_scale)
+        self.mi_reg = MIRegularization(setup, mi_scale)
+        self.sparsity_reg = L1Regularization(setup, l1_scale)
+
+    def center_and_whiten(self, G, eps=1e-5):
+        """
+        G: (n, d) gradient matrix
+        """
+        G = G - G.mean(dim=1, keepdim=True)
+        cov = (G @ G.T) / G.shape[1]
+        eigvals, eigvecs = torch.linalg.eigh(cov)
+        W = eigvecs @ torch.diag(1.0 / torch.sqrt(eigvals + eps)) @ eigvecs.T
+        return W @ G
+
+    def safe_negentropy(self, z):
+        return torch.mean(torch.abs(z) + torch.log1p(torch.exp(-2 * torch.abs(z))) - torch.log(torch.tensor(2.0, device=z.device)))
     
-    def calculate_cosh(self, tensor):
-        return torch.cosh(tensor).mean()
+    def negentropy(self, z, a=2.0):
+        return torch.mean(torch.log(torch.cosh(a * z).square() + 1e-5) / a**2)
+
+    def cpa_loss(self, U, G, *args, **kwargs):
+        """
+        U: (B, n)
+        G: (n, d)
+        """
+        Z = U @ G
+        Z_ = Z / (Z.std(dim=1, keepdim=True) + 1e-6)
+        J = torch.mean(torch.stack([self.safe_negentropy(Z_[i]) for i in range(Z_.shape[0])]))
+        SP = self.sparsity_reg(Z)
+        SR = self.sign_reg(Z)
+        MI = self.mi_reg(U)
+        # log.info(f"J: {J.item():2.4f}, SP: {SP.item():2.4f}, SR: {SR.item():2.4f}, MI: {MI.item():2.4f}")
+        return -(J-SP-SR-MI)
 
     def initialize(self, models, shared_data, labels, *args, **kwargs):
         self.refs = [None for model in models]
@@ -71,9 +121,35 @@ class ICAFeatureRegularization(torch.nn.Module):
                 if isinstance(module, torch.nn.Linear) and 'head' in name:
                     self.refs[idx] = _LinearFeatureHook(module)
 
+        self.measured_features = []
+        for user_data in shared_data:
+            # Assume last two gradient vector entries are weight and bias:
+            G = user_data["gradients"][-2]
+            G = self.center_and_whiten(G) # footnote Page no. 4 CPA Paper
+            U = torch.randn(labels.shape[0], G.shape[0], requires_grad=True, device=G.device)
+            optimizer = torch.optim.LBFGS([U], lr=1.0, max_iter=10, line_search_fn="strong_wolfe")
+            def closure():
+                optimizer.zero_grad()
+                loss = self.cpa_loss(U, G)
+                # log.info(f"CPA Loss: {loss.item():2.4f}")
+                loss.backward()
+                return loss
+            for _ in range(10):
+                optimizer.step(closure)
+                # with torch.no_grad():
+                #     Uu, _, Vh = torch.linalg.svd(U, full_matrices=False)
+                #     U.copy_(Uu @ Vh) # project U back to the Stiefel manifold
+                    # U.copy_(torch.nn.functional.normalize(U, dim=1))
+                # enforces U.U^T = I
+            Z_hat = U @ G   # recovered private embeddings
+            Z_hat = torch.where(Z_hat.mean(dim=1, keepdim=True) < 0, -Z_hat, Z_hat)
+            self.measured_features.append(Z_hat)
+
     def forward(self, tensor, *args, **kwargs):
         regularization_value = 0
-        for ref, measured_val in zip(self.refs, tensor):
+        for ref, measured_val in zip(self.refs, self.measured_features):
+            # log.info(f"Shape of ref.features: {ref.features.shape}")
+            # log.info(f"Shape of measured_val: {measured_val.shape}")
             regularization_value += torch.nn.functional.mse_loss(ref.features, measured_val)
         return regularization_value * self.scale
 
@@ -442,6 +518,9 @@ regularizer_lookup = dict(
     norm=NormRegularization,
     deep_inversion=DeepInversion,
     features=FeatureRegularization,
+    ica_features=ICAFeatureRegularization,
     image_prior=ImagePrior,
     patch_prior=PatchPrior,
+    sign_regularization=SignRegularization,
+    mi_regularization=MIRegularization,
 )

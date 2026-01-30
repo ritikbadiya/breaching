@@ -46,6 +46,7 @@ def main_process(process_idx, local_group_size, cfg, num_trials=100, job_name=No
         cfg.case.user.user_idx += 1
         try:
             user = breaching.cases.construct_user(model, loss_fn, cfg.case, setup)
+            log.info(f"User Batch Size: {user.dataloader.batch_size}") # OK
         except ValueError:
             log.info("Cannot find other valid users. Finishing benchmark.")
             break
@@ -61,13 +62,13 @@ def main_process(process_idx, local_group_size, cfg, num_trials=100, job_name=No
             # Run exchange
             shared_user_data, payloads, true_user_data = server.run_protocol(user)
             # Evaluate attack:
-            try:
-                reconstruction, stats = attacker.reconstruct(
-                    payloads, shared_user_data, server.secrets, dryrun=cfg.dryrun
-                )
-            except Exception as e:
-                log.info(f"Reconstruction for trial {run} broke down with error {e}.")
-                continue
+            # try:
+            reconstruction, stats = attacker.reconstruct(
+                payloads, shared_user_data, server.secrets, dryrun=cfg.dryrun
+            )
+            # except Exception as e:
+            #     log.info(f"Reconstruction for trial {run} broke down with error {e}.")
+            #     continue
             try:
                 # Run the full set of metrics:
                 metrics = breaching.analysis.report(
