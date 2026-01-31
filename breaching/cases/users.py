@@ -166,6 +166,7 @@ class UserSingleStep(torch.nn.Module):
         else:
             # Compute the forward pass
             shared_grads = _compute_batch_gradient(data)
+            # log.info(f"Length of shared_grads: {len(shared_grads)}, type(shared_grads): {type(shared_grads)}")
         self._apply_differential_noise(shared_grads)
 
         if buffers is not None:

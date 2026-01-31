@@ -249,6 +249,43 @@ class EuclideanGradCosSimPosEmbed(GradientLoss):
         objective = objective.sum()
         return objective
 
+class CosSimGradCosSimPosEmbed(GradientLoss):
+    """Gradient matching based on cosine similarity of two sets of PosEmbeddings."""
+
+    def __init__(self, scale=1.0, task_regularization=0.0, posembed_scale=0.1, **kwargs):
+        super().__init__()
+        self.scale = scale
+        self.task_regularization = task_regularization
+        self.posembed_scale = posembed_scale
+
+    def gradient_based_loss(self, gradient_rec, gradient_data):
+        gradient_rec = list(gradient_rec)
+        gradient_data = list(gradient_data)
+        # log.info(f"grad-rec: {len(gradient_rec)}, grad-data: {len(gradient_data)}")
+        posembed_rec = gradient_rec.pop(1)
+        posembed_data = gradient_data.pop(1)
+        # log.info(f"grad-rec: {len(gradient_rec)}, grad-data: {len(gradient_data)}")
+        return self._cosine_sim(gradient_rec, gradient_data) * self.scale \
+            + self._cosine_sim(posembed_rec, posembed_data) * self.posembed_scale
+
+    def __repr__(self):
+        return f"Cosine Similarity with scale={self.scale} and Cosine Similarity for PosEmbed with scale={self.posembed_scale} and task regularization {self.task_regularization}"
+
+    @staticmethod
+    @torch.jit.script
+    def _cosine_sim(gradient_rec: torch.Tensor, gradient_data: torch.Tensor):
+        objective = gradient_rec[0].new_zeros(1,)
+        for gr, gd in zip(gradient_rec, gradient_data):
+            gr = gr.flatten()
+            gd = gd.flatten()
+            scalar_product = (gr * gd).sum()
+            rec_norm = gr.pow(2).sum()
+            data_norm = gd.pow(2).sum()
+
+            objective += 1 - scalar_product / (rec_norm.sqrt() * data_norm.sqrt())
+        objective /= len(gradient_rec)
+        return objective
+
 class AngularSimilarity(CosineSimilarity):
     """Gradient matching based on angular similarity of two gradient vectors.
 

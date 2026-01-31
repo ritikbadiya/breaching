@@ -23,6 +23,32 @@ class _LinearFeatureHook:
     def close(self):
         self.hook.remove()
 
+class L2Regularization(torch.nn.Module):
+    """L2 regularization."""
+
+    def __init__(self, setup, scale=0.1):
+        super().__init__()
+        self.setup = setup
+        self.scale = scale
+    
+    def initialize(self, models, shared_data, labels, *args, **kwargs):
+        pass
+
+    def forward(self, tensor, *args, **kwargs):
+        if kwargs.get('target', None) is not None:
+            if isinstance(tensor, list) and isinstance(kwargs['target'], list):
+                loss = 0
+                for t, tt in zip(tensor, kwargs['target']):
+                    loss += torch.pow(t - tt, 2).mean()
+                return loss * self.scale
+            elif isinstance(tensor, list) and not isinstance(kwargs['target'], list):
+                loss = 0
+                for t in tensor:
+                    loss += torch.pow(t - kwargs['target'], 2).mean()
+                return loss * self.scale
+            return torch.pow(tensor - kwargs['target'], 2).mean() * self.scale
+        return torch.pow(tensor, 2).mean() * self.scale
+
 class L1Regularization(torch.nn.Module):
     """L1 regularization implemented for the last linear layer at the end."""
 
@@ -571,5 +597,6 @@ regularizer_lookup = dict(
     patch_prior=PatchPrior,
     group_regularization=GroupRegularization,
     sign_regularization=SignRegularization,
-    mi_regularization=MIRegularization
+    mi_regularization=MIRegularization,
+    l2_regularization=L2Regularization,
 )
