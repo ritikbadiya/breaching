@@ -30,7 +30,7 @@ augmentations_val:
 
 # Federated Learning specifics:
 default_clients: 10
-partition: balanced # used for synthetic splits. Current options for synthetic split: balanced / unique-class
+partition: random # used for synthetic splits. Current options for synthetic split: balanced / unique-class
 examples_from_split: validation
 
 # Data-specific implementation constants:

@@ -15,11 +15,11 @@ import breaching
 
 import os
 
-os.environ["HYDRA_FULL_ERROR"] = "0"
+os.environ["HYDRA_FULL_ERROR"] = "1"  # Enable full Hydra errors for debugging
 log = logging.getLogger(__name__)
 
 
-def main_process(process_idx, local_group_size, cfg, num_trials=100):
+def main_process(process_idx, local_group_size, cfg, num_trials=100, job_name=None):
     """This function controls the central routine."""
     total_time = time.time()  # Rough time measurements here
     setup = breaching.utils.system_startup(process_idx, local_group_size, cfg)
@@ -46,6 +46,7 @@ def main_process(process_idx, local_group_size, cfg, num_trials=100):
         cfg.case.user.user_idx += 1
         try:
             user = breaching.cases.construct_user(model, loss_fn, cfg.case, setup)
+            log.info(f"User Batch Size: {user.dataloader.batch_size}") # OK
         except ValueError:
             log.info("Cannot find other valid users. Finishing benchmark.")
             break
@@ -58,15 +59,17 @@ def main_process(process_idx, local_group_size, cfg, num_trials=100):
             log.info(f"Skipping user {user.user_idx} (has not enough data or data shape mismatch).")
         else:
             log.info(f"Now evaluating user {user.user_idx} in trial {run}.")
-            run += 1
             # Run exchange
             shared_user_data, payloads, true_user_data = server.run_protocol(user)
             # Evaluate attack:
+            # try:
+            reconstruction, stats = attacker.reconstruct(
+                payloads, shared_user_data, server.secrets, dryrun=cfg.dryrun
+            )
+            # except Exception as e:
+            #     log.info(f"Reconstruction for trial {run} broke down with error {e}.")
+            #     continue
             try:
-                reconstruction, stats = attacker.reconstruct(
-                    payloads, shared_user_data, server.secrets, dryrun=cfg.dryrun
-                )
-
                 # Run the full set of metrics:
                 metrics = breaching.analysis.report(
                     reconstruction,
@@ -84,8 +87,12 @@ def main_process(process_idx, local_group_size, cfg, num_trials=100):
                 metrics["queries"] = user.counted_queries
 
                 # Save local summary:
-                breaching.utils.save_summary(cfg, metrics, stats, time.time() - local_time, original_cwd=False)
+                breaching.utils.save_summary(cfg, metrics, stats, time.time() - local_time, original_cwd=False, job_name=job_name)
                 overall_metrics.append(metrics)
+            except Exception as e:
+                log.info(f"Metrics computation for trial {run} broke down with error {e}.")
+                continue
+            try:
                 # Save recovered data:
                 if cfg.save_reconstruction:
                     breaching.utils.save_reconstruction(reconstruction, payloads, true_user_data, cfg)
@@ -93,13 +100,14 @@ def main_process(process_idx, local_group_size, cfg, num_trials=100):
                     break
             except Exception as e:  # noqa # yeah we're that close to the deadlines
                 log.info(f"Trial {run} broke down with error {e}.")
+            run += 1
 
     # Compute average statistics:
     average_metrics = breaching.utils.avg_n_dicts(overall_metrics)
 
     # Save global summary:
     breaching.utils.save_summary(
-        cfg, average_metrics, stats, time.time() - total_time, original_cwd=True, table_name="BENCHMARK_breach"
+        cfg, average_metrics, stats, time.time() - total_time, original_cwd=True, table_name="BENCHMARK_breach", job_name=job_name
     )
 
 
@@ -114,9 +122,14 @@ def main_launcher(cfg):
     if cfg.seed is None:
         cfg.seed = 233  # The benchmark seed is fixed by default!
 
+    # Extract job_name from config if provided
+    job_name = cfg.get("job_name", None)
+    if job_name:
+        log.info(f"Running with job name: {job_name}")
+
     log.info(OmegaConf.to_yaml(cfg))
     breaching.utils.initialize_multiprocess_log(cfg)  # manually save log configuration
-    main_process(0, 1, cfg)
+    main_process(0, 1, cfg, job_name=job_name)
 
     log.info("-------------------------------------------------------------")
     log.info(

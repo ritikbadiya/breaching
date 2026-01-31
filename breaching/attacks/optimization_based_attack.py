@@ -171,13 +171,17 @@ class OptimizationBasedAttacker(_BaseAttacker):
                 objective, task_loss = self.objective(model, data["gradients"], candidate_augmented, labels)
                 total_objective += objective
                 total_task_loss += task_loss
+            # log.info(f"Objective Loss: {objective.item():2.4f}")
+            # log.info(f"Number of regularizers: {len(self.regularizers)}")
             for regularizer in self.regularizers:
                 if hasattr(regularizer, "x_list"):
                     regularizer.x_list = getattr(self, "candidate_solutions", None)
                 if hasattr(regularizer, "aligner") and regularizer.aligner is None:
                     regularizer.aligner = self.aligner
-
-                total_objective += regularizer(candidate_augmented)
+                    
+                temp_loss = regularizer(candidate_augmented)
+                # log.info(f"Regularizer Loss: {temp_loss.item():2.4f}")
+                total_objective += temp_loss
 
 
             if total_objective.requires_grad:

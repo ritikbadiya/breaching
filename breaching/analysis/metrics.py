@@ -293,7 +293,22 @@ def image_identifiability_precision(
             for score in scores:
                 if score == "lpips":
                     with torch.inference_mode():
-                        distances[score] += [lpips_scorer(reconstruction, comparable_data, normalize=False).mean()]
+                        rec_input = reconstruction
+                        comp_input = comparable_data
+                        if rec_input.ndim == 3:
+                            rec_input = rec_input.unsqueeze(0)
+                        if comp_input.ndim == 3:
+                            comp_input = comp_input.unsqueeze(0)
+
+                        if rec_input.shape[-1] < 32:
+                            rec_input = torch.nn.functional.interpolate(
+                                rec_input, size=(32, 32), mode="bilinear", align_corners=False
+                            )
+                        if comp_input.shape[-1] < 32:
+                            comp_input = torch.nn.functional.interpolate(
+                                comp_input, size=(32, 32), mode="bilinear", align_corners=False
+                            )
+                        distances[score] += [lpips_scorer(rec_input, comp_input, normalize=False).mean()]
                 elif score == "self" and model is not None:
                     features_rec = _return_model_features(model, reconstruction)
                     features_comp = _return_model_features(model, comparable_data)

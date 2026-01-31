@@ -10,9 +10,9 @@ defaults:
 base_dir: outputs
 hydra:
   sweep:
-    dir: ${base_dir}/${name}/${attack.type}-${attack.attack_type}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    dir: ${base_dir}/${name}/${attack.type}-${attack.attack_type}/${job_name}/${now:%Y-%m-%d}/${now:%H-%M-%S}
   run:
-    dir: ${base_dir}/${name}/${attack.type}-${attack.attack_type}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    dir: ${base_dir}/${name}/${attack.type}-${attack.attack_type}/${job_name}/${now:%Y-%m-%d}/${now:%H-%M-%S}
 # To change output folder location:
 # Set hydra.output_subdir=something
 # searchpath:
@@ -20,6 +20,7 @@ hydra:
 
 seed: # Optional: Set initial seed
 name: default # A name for this run [will be used for the summary table and outputs folder]
+job_name: default # Optional: Job-specific name for organizing logs
 
 # debug implementation by running every loop just once:
 dryrun: False
