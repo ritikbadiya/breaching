@@ -2,6 +2,7 @@ defaults:
   - _default_optimization_attack
   - _self_
 type: gradvit
+attack_type: gradvit
 label_strategy: yin
 
 objective:
