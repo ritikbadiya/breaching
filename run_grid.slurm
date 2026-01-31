@@ -69,9 +69,10 @@ ATTACK=invertinggradients
 # -----------------------------------------------------------------------------
 # 1. Define the grid
 # -----------------------------------------------------------------------------
-BATCH_SIZES=(1 4 16 32)
-STEP_SIZES=(0.1 0.25 0.5 1.0)
-TV_SCALES=(0.01 0.1 0.2 0.5 1.0)
+BATCH_SIZES=(1 4)
+STEP_SIZES=(0.1 0.2)
+OBJ_SCALES=(0.0001 0.001)
+TV_SCALES=(0.1 0.2 0.5)
 # PATCH_SCALES=(0.1)
 
 # -----------------------------------------------------------------------------
@@ -81,29 +82,34 @@ count=0
 
 for bs in "${BATCH_SIZES[@]}"; do
     for ss in "${STEP_SIZES[@]}"; do
-        for tv in "${TV_SCALES[@]}"; do
-            # for ps in "${PATCH_SCALES[@]}"; do
+        for os in "${OBJ_SCALES[@]}"; do
+            for tv in "${TV_SCALES[@]}"; do
+                # for ps in "${PATCH_SCALES[@]}"; do
 
-            JOB_NAME="invertinggradients_bs${bs}_ss${ss}_tv${tv}"
+                JOB_NAME="invertinggradients_bs${bs}_ss${ss}_os${os}_tv${tv}"
 
-            echo "Submitting job $count: $JOB_NAME"
+                echo "Submitting job $count: $JOB_NAME"
 
-            python benchmark_breaches.py \
+                python benchmark_breaches.py \
                     case=1_single_image_small \
                     case/data=MNIST \
                     case.model=vit_custom \
                     case.server.pretrained=False \
                     case.data.batch_size=${bs} \
+                    case.user.num_data_points='${case.data.batch_size}' \
                     attack=${ATTACK} \
                     attack.optim.step_size=${ss} \
+                    attack.objective.scale=${os} \
                     attack.regularization.total_variation.scale=${tv} \
                     save_reconstruction=true \
                     dryrun=False \
                     job_name="${JOB_NAME}" \
-                    num_trials=3
+                    num_trials=3 \
+                    case.impl.threads=4
 
-            count=$((count + 1))
+                count=$((count + 1))
 
+            done
         done
     done
 done
