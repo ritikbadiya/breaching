@@ -51,7 +51,23 @@ def main_process(process_idx, local_group_size, cfg):
     shared_user_data, payloads, true_user_data = server.run_protocol(user)
 
     # Run an attack using only payload information and shared data
-    reconstructed_user_data, stats = attacker.reconstruct(payloads, shared_user_data, server.secrets, dryrun=cfg.dryrun)
+    reconstructions = []
+    all_stats = []
+
+    NUM_RUNS = 3  # 👈 this is what replaces num_trials
+
+    for i in range(NUM_RUNS):
+        print(f"\n[INFO] Reconstruction run {i}")
+
+        reconstructed_user_data, stats = attacker.reconstruct(
+            payloads,
+            shared_user_data,
+            server.secrets,
+            dryrun=cfg.dryrun
+        )
+
+        reconstructions.append(reconstructed_user_data["data"].detach())
+        all_stats.append(stats)
 
     # How good is the reconstruction?
     metrics = breaching.analysis.report(
