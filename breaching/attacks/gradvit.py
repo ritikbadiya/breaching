@@ -15,18 +15,28 @@ from .base_attack import _BaseAttacker
 from .auxiliaries.regularizers import regularizer_lookup, TotalVariation
 from .auxiliaries.objectives import Euclidean, CosineSimilarity, objective_lookup
 from .auxiliaries.augmentations import augmentation_lookup
+from .auxiliaries.aligners import RANSACHomographyAligner
+from breaching.attacks.auxiliaries.aligners import RANSACHomographyAligner, build_feature_net
 
 import logging
 
 log = logging.getLogger(__name__)
 
 
-class OptimizationBasedAttacker(_BaseAttacker):
-    """Implements a wide spectrum of optimization-based attacks."""
+class GradVit(_BaseAttacker):
+    """Implements Gradvit with regualrization terms."""
 
     def __init__(self, model, loss_fn, cfg_attack, setup=dict(dtype=torch.float, device=torch.device("cpu"))):
         super().__init__(model, loss_fn, cfg_attack, setup)
 
+        self.aligner = None
+        if "group_regularization" in getattr(self.cfg, "regularization", {}):
+            feat_net = build_feature_net(self.setup["device"])
+
+            self.aligner = RANSACHomographyAligner(
+                netFeatCoarse=feat_net,
+                device=self.setup["device"]
+            )
         objective_fn = objective_lookup.get(self.cfg.objective.type)
         log.info(f"Using objective function: {self.cfg.objective}")
         if objective_fn is None:
@@ -73,6 +83,7 @@ class OptimizationBasedAttacker(_BaseAttacker):
                 candidate_solutions += [
                     self._run_trial(rec_models, shared_data, labels, stats, trial, initial_data, dryrun)
                 ]
+                self.candidate_solutions = candidate_solutions
                 scores[trial] = self._score_trial(candidate_solutions[trial], labels, rec_models, shared_data)
         except KeyboardInterrupt:
             print("Trial procedure manually interruped.")
@@ -163,6 +174,11 @@ class OptimizationBasedAttacker(_BaseAttacker):
             # log.info(f"Objective Loss: {objective.item():2.4f}")
             # log.info(f"Number of regularizers: {len(self.regularizers)}")
             for regularizer in self.regularizers:
+                if hasattr(regularizer, "x_list"):
+                    regularizer.x_list = getattr(self, "candidate_solutions", None)
+                if hasattr(regularizer, "aligner") and regularizer.aligner is None:
+                    regularizer.aligner = self.aligner
+                    
                 temp_loss = regularizer(candidate_augmented)
                 # log.info(f"Regularizer Loss: {temp_loss.item():2.4f}")
                 total_objective += temp_loss
