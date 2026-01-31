@@ -26,7 +26,7 @@ augmentations_val:
 
 # Federated Learning specifics:
 default_clients: 10
-partition: balanced 
+partition: random 
 examples_from_split: validation
 
 # Data-specific implementation constants:
