@@ -10,7 +10,7 @@ objective:
   max_iters: 20_000
 
 restarts:
-  num_trials: 1
+  num_trials: 3
   scoring: "cosine-similarity"
 
 optim:
@@ -44,8 +44,9 @@ regularization:
   norm:
     scale: 0.1
     pnorm: 2
-  
-  # group_regularization: # Not implemented.
-  #  scale: 0.01
+  group_regularization: # Not implemented.
+    scale: 0.01
+    warmup_iters: 2000
+    
 
 
