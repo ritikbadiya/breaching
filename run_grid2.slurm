@@ -13,7 +13,7 @@
 #SBATCH --output=slurm_logs/master_%j.out
 #SBATCH --error=slurm_logs/master_%j.err
 #SBATCH --partition=ada
-#SBATCH --nodelist=cn9
+#SBATCH --nodelist=cn7
 #SBATCH --gres=gpu:1
 #SBATCH --mem=32G
 #SBATCH --cpus-per-task=4
@@ -69,7 +69,7 @@ ATTACK=invertinggradients
 # -----------------------------------------------------------------------------
 # 1. Define the grid
 # -----------------------------------------------------------------------------
-BATCH_SIZES=(1)
+BATCH_SIZES=(4)
 STEP_SIZES=(0.1 0.2)
 OBJ_SCALES=(0.0001 0.001 0.01)
 TV_SCALES=(0.1 0.2 0.5)
