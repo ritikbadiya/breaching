@@ -54,7 +54,7 @@ def main_process(process_idx, local_group_size, cfg):
     reconstructions = []
     all_stats = []
 
-    NUM_RUNS = 3  # 👈 this is what replaces num_trials
+    NUM_RUNS = 3  
 
     for i in range(NUM_RUNS):
         print(f"\n[INFO] Reconstruction run {i}")

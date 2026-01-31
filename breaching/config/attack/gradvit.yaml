@@ -7,7 +7,7 @@ label_strategy: yin
 objective:
   type: cosine-similarity
   scale: 1e-1 # need to have a much smaller scale like 0.0001 for euclidean objectives
-  max_iters: 20
+  max_iters: 20_000
 
 restarts:
   num_trials: 1
@@ -18,7 +18,7 @@ optim:
   signed:
   step_size: 0.1
   boxed: False
-  max_iterations: 20
+  max_iterations: 20_000
   step_size_decay: cosine-decay
 
   callback: 1000 # Print objective value every callback many iterations
@@ -46,7 +46,7 @@ regularization:
     pnorm: 2
   group_regularization: # Not implemented.
     scale: 0.01
-    warmup_iters: 10
+    warmup_iters: 2000
     
 
 
