@@ -2,6 +2,11 @@
 
 import torch
 from torch.nn.attention import SDPBackend, sdpa_kernel
+
+torch.backends.cuda.enable_flash_sdp(False)
+torch.backends.cuda.enable_mem_efficient_sdp(False)
+torch.backends.cuda.enable_math_sdp(True)
+
 from typing import List
 
 from .make_functional import make_functional_with_buffers
@@ -581,6 +586,129 @@ class PearlmutterCosine(PearlmutterEuclidean):
             data_norm += data.detach().pow(2).sum()
 
         return scalar_product, rec_norm.sqrt(), data_norm.sqrt()
+    
+
+class BoostingGLAEuclidean(torch.nn.Module):
+    """
+    FEDLEAK-style perturb-and-blend using candidate-space perturbations.
+    """
+
+    def __init__(
+        self,
+        scale=1.0,
+        R=0.5,
+        lambda_blend=0.7,
+        eps=1e-3,
+        task_regularization=0.0,
+        **kwargs,
+    ):
+        super().__init__()
+        self.scale = scale
+        self.R = R
+        self.lambda_blend = lambda_blend
+        self.eps = eps
+        self.task_regularization = task_regularization
+
+    def initialize(self, loss_fn, cfg_impl, local_hyperparams=None):
+        self.loss_fn = loss_fn
+        self.cfg_impl = cfg_impl
+        if local_hyperparams is not None:
+            raise ValueError("This loss only supports local gradients.")
+
+    def __repr__(self):
+        return (
+            f"PearlmutterBoostingGLA(scale={self.scale}, R={self.R}, "
+            f"lambda_blend={self.lambda_blend}, eps={self.eps})"
+        )
+
+    def forward(self, model, gradient_data, candidate, labels):
+        model.zero_grad()
+
+        # ---- FIRST PASS: x′ ----
+        with torch.autocast(candidate.device.type, enabled=self.cfg_impl.mixed_precision):
+            task_loss = self.loss_fn(model(candidate), labels)
+
+        *gradients, dLdx = torch.autograd.grad(
+            task_loss,
+            (*model.parameters(), candidate),
+            create_graph=True
+        )
+
+        # partial gradient matching + L1+cosine
+        D, grad_x = self._gradient_matching_and_grad(
+            candidate, gradients, gradient_data
+        )
+
+        phi = self.eps * grad_x / (grad_x.norm() + 1e-12)
+
+        candidate_pert = (candidate + phi).detach().requires_grad_(True)
+
+        with torch.autocast(candidate.device.type, enabled=self.cfg_impl.mixed_precision):
+            task_loss_p = self.loss_fn(model(candidate_pert), labels)
+
+        *gradients_p, dLdx_p = torch.autograd.grad(
+            task_loss_p,
+            (*model.parameters(), candidate_pert),
+            create_graph=True
+        )
+
+        _, grad_x_p = self._gradient_matching_and_grad(
+            candidate_pert, gradients_p, gradient_data
+        )
+
+        # Blend
+        candidate.grad = (
+            (1.0 - self.lambda_blend) * grad_x
+            + self.lambda_blend * grad_x_p
+        ) * self.scale
+
+        # optional task loss regularization
+        candidate.grad += self.task_regularization * dLdx
+
+        return D.detach(), task_loss.detach()
+
+    def _gradient_matching_and_grad(self, candidate, gradients, gradient_data):
+        """
+        Computes:
+        - Partial gradient matching (top-R%)
+        - L1 + cosine distance
+        - ∇x′ D(x′)
+        """
+
+        mags = torch.tensor(
+            [g.abs().sum() for g in gradients],
+            device=gradients[0].device
+        )
+
+        k_top = max(1, int(self.R * mags.numel()))
+        indices = torch.topk(mags, k_top, largest=True).indices
+
+        grad_sel = [gradients[i] for i in indices]
+        data_sel = [gradient_data[i] for i in indices]
+
+        # L1 + cosine dist.
+        l1 = grad_sel[0].new_zeros(1,)
+        dot = grad_sel[0].new_zeros(1,)
+        norm_g = grad_sel[0].new_zeros(1,)
+        norm_d = grad_sel[0].new_zeros(1,)
+
+        for g, d in zip(grad_sel, data_sel):
+            l1 += (g - d).abs().sum()
+            dot += (g * d).sum()
+            norm_g += g.pow(2).sum()
+            norm_d += d.pow(2).sum()
+
+        cosine = dot / (torch.sqrt(norm_g) * torch.sqrt(norm_d) + 1e-12)
+        D = l1 + (1.0 - cosine)
+
+        grad_x = torch.autograd.grad(
+            D,
+            candidate,
+            retain_graph=False
+        )[0]
+
+        return D, grad_x
+
 
 
 objective_lookup = {
@@ -594,4 +722,5 @@ objective_lookup = {
     "pearlmutter-loss": PearlmutterEuclidean,
     "pearlmutter-cosine": PearlmutterCosine,
     "tag-euclidean": EuclideanTag,
+    "boosting-euclidean": BoostingGLAEuclidean
 }
