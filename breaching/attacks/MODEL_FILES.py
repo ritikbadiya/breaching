@@ -8,3 +8,4 @@ STYLEGANXL_FFHQ256 = "https://s3.eu-central-1.amazonaws.com/avg-projects/stylega
 STYLEGAN2ADA_CIFAR = "https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/cifar10.pkl"
 STYLEGAN2ADA_FFHQ1024 = "https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/ffhq.pkl"
 
+

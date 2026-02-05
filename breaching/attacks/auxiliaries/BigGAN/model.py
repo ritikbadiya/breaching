@@ -21,8 +21,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .config import BigGANConfig
-from .file_utils import cached_path
+from config import BigGANConfig
+from file_utils import cached_path
 
 logger = logging.getLogger(__name__)
 
@@ -298,13 +298,13 @@ class BigGAN(nn.Module):
 
 if __name__ == "__main__":
     import PIL
-    from .utils import truncated_noise_sample, save_as_images, one_hot_from_names
-    from .convert_tf_to_pytorch import load_tf_weights_in_biggan
+    from utils import truncated_noise_sample, save_as_images, one_hot_from_names
+    from convert_tf_to_pytorch import load_tf_weights_in_biggan
 
     load_cache = False
     cache_path = './saved_model.pt'
     config = BigGANConfig()
-    model = BigGAN(config)
+    model = BigGAN(config).from_pretrained('biggan-deep-128', cache_dir='./models')
     if not load_cache:
         model = load_tf_weights_in_biggan(model, config, './models/model_128/', './models/model_128/batchnorms_stats.bin')
         torch.save(model.state_dict(), cache_path)

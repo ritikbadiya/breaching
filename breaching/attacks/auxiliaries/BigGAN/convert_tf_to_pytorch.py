@@ -15,8 +15,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.functional import normalize
 
-from .model import BigGAN, WEIGHTS_NAME, CONFIG_NAME
-from .config import BigGANConfig
+from model import BigGAN, WEIGHTS_NAME, CONFIG_NAME
+from config import BigGANConfig
 
 logger = logging.getLogger(__name__)
 
@@ -114,19 +114,24 @@ def build_tf_to_pytorch_map(model, config):
 
 
 def load_tf_weights_in_biggan(model, config, tf_model_path, batch_norm_stats_path=None):
-    """ Load tf checkpoints and standing statistics in a pytorch model
+    """Load TF checkpoints and standing statistics in a PyTorch model.
+
+    If TensorFlow is unavailable, this falls back to TensorStore's TF checkpoint
+    reader. Install with: `pip install tensorstore`.
+    The checkpoint prefix is expected at `${tf_model_path}/variables/variables`.
     """
     try:
         import numpy as np
         import tensorflow as tf
+        tf_available = True
     except ImportError:
-        raise ImportError("Loading a TensorFlow models in PyTorch, requires TensorFlow to be installed. Please see "
-            "https://www.tensorflow.org/install/ for installation instructions.")
+        tf_available = False
     # Load weights from TF model
     checkpoint_path = tf_model_path + "/variables/variables"
-    init_vars = tf.train.list_variables(checkpoint_path)
-    from pprint import pprint
-    pprint(init_vars)
+    if tf_available:
+        init_vars = tf.train.list_variables(checkpoint_path)
+        from pprint import pprint
+        pprint(init_vars)
 
     # Extract batch norm statistics from model if needed
     if batch_norm_stats_path:
@@ -139,9 +144,13 @@ def load_tf_weights_in_biggan(model, config, tf_model_path, batch_norm_stats_pat
     tf_to_pt_map = build_tf_to_pytorch_map(model, config)
 
     tf_weights = {}
-    for name in tf_to_pt_map.keys():
-        array = tf.train.load_variable(checkpoint_path, name)
-        tf_weights[name] = array
+    if tf_available:
+        for name in tf_to_pt_map.keys():
+            array = tf.train.load_variable(checkpoint_path, name)
+            tf_weights[name] = array
+    else:
+        from .tf_checkpoint_reader import load_variables
+        tf_weights = load_variables(checkpoint_path, tf_to_pt_map.keys())
         # logger.info("Loading TF weight {} with shape {}".format(name, array.shape))
 
     # Load parameters
