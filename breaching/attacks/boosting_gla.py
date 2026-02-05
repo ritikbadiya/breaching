@@ -22,7 +22,6 @@ log = logging.getLogger(__name__)
 
 
 class BoostingGLA(_BaseAttacker):
-    """Implements a wide spectrum of optimization-based attacks."""
 
     def __init__(self, model, loss_fn, cfg_attack, setup=dict(dtype=torch.float, device=torch.device("cpu"))):
         super().__init__(model, loss_fn, cfg_attack, setup)
