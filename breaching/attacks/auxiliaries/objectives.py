@@ -271,14 +271,14 @@ class CosSimGradCosSimPosEmbed(GradientLoss):
         posembed_data = gradient_data.pop(1)
         # log.info(f"grad-rec: {len(gradient_rec)}, grad-data: {len(gradient_data)}")
         return self._cosine_sim(gradient_rec, gradient_data) * self.scale \
-            + self._cosine_sim(posembed_rec, posembed_data) * self.posembed_scale
+            + self._cosine_sim_layerwise(posembed_rec, posembed_data) * self.posembed_scale
 
     def __repr__(self):
         return f"Cosine Similarity with scale={self.scale} and Cosine Similarity for PosEmbed with scale={self.posembed_scale} and task regularization {self.task_regularization}"
 
     @staticmethod
     @torch.jit.script
-    def _cosine_sim(gradient_rec: torch.Tensor, gradient_data: torch.Tensor):
+    def _cosine_sim_layerwise(gradient_rec: torch.Tensor, gradient_data: torch.Tensor):
         objective = gradient_rec[0].new_zeros(1,)
         for gr, gd in zip(gradient_rec, gradient_data):
             gr = gr.flatten()
@@ -289,6 +289,21 @@ class CosSimGradCosSimPosEmbed(GradientLoss):
 
             objective += 1 - scalar_product / (rec_norm.sqrt() * data_norm.sqrt())
         objective /= len(gradient_rec)
+        return objective
+    
+    @staticmethod
+    @torch.jit.script
+    def _cosine_sim(gradient_rec: List[torch.Tensor], gradient_data: List[torch.Tensor]):
+        scalar_product = gradient_rec[0].new_zeros(1,)
+        rec_norm = gradient_rec[0].new_zeros(1,)
+        data_norm = gradient_rec[0].new_zeros(1,)
+
+        for rec, data in zip(gradient_rec, gradient_data):
+            scalar_product += (rec * data).sum()
+            rec_norm += rec.pow(2).sum()
+            data_norm += data.pow(2).sum()
+
+        objective = 1 - scalar_product / (rec_norm.sqrt() * data_norm.sqrt())
         return objective
 
 class AngularSimilarity(CosineSimilarity):
@@ -715,6 +730,7 @@ objective_lookup = {
     "euclidean": Euclidean,
     "cosine-similarity": CosineSimilarity,
     "euclidean-grad-cossim-posembed": EuclideanGradCosSimPosEmbed,
+    "cosine-grad-cossim-posembed": CosSimGradCosSimPosEmbed,
     "masked-cosine-similarity": MaskedCosineSimilarity,
     "fast-cosine-similarity": FastCosineSimilarity,
     "angular": AngularSimilarity,
