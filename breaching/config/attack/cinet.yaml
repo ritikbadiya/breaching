@@ -1,11 +1,15 @@
 defaults:
   - _default_optimization_attack
   - _self_
-attack_type: gias
+type: generativegia
+attack_type: cinet
+label-strategy: bias-corrected # yin used in paper, but bias_corrected is better in practice. See the paper for details.
 
 objective:
   type: cosine-similarity
   scale: 1.0 # need to have a much smaller scale like 0.0001 for euclidean objectives
+  posembed_scale: 0.01
+  task_regularization: 0.0
 
 restarts:
   num_trials: 1
@@ -13,17 +17,20 @@ restarts:
 
 optim:
   optimizer: adam
-  signed: "hard"
-  step_size: 0.1
+  signed:
+  step_size: 0.001
   boxed: True
-  max_iterations: 24_000
+  max_iterations: 2_000
   step_size_decay: step-lr
 
-  callback: 1000 # Print objective value every callback many iterations
+  callback: 100 # Print objective value every callback many iterations
 
 regularization:
   total_variation:
-    scale: 0.2
+    scale: 0.000 #1
     # 0.2 # The old version did not take the mean dx + dy as the new version, so this corresponds to 0.1 in the old repo
     inner_exp: 1
     outer_exp: 1
+  # group_regularization:
+  #   scale: 0.0001
+    

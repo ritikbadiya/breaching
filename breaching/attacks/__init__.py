@@ -11,6 +11,7 @@ from .recursive_attack import RecursiveAttacker
 from .gradvit import GradVit
 from .nonlinear_surrogateme import NonLinearSurrogateModelExtension
 from .boosting_gla import BoostingGLA
+from .gan_gradmatching_based_attack import GANGradMatchingAttacker
 
 
 def prepare_attack(model, loss, cfg_attack, setup=dict(dtype=torch.float, device=torch.device("cpu"))):
@@ -40,6 +41,8 @@ def prepare_attack(model, loss, cfg_attack, setup=dict(dtype=torch.float, device
         attacker = NonLinearSurrogateModelExtension(model, loss, cfg_attack, setup)
     elif cfg_attack.attack_type == "boosting-gla":
         attacker = BoostingGLA(model, loss, cfg_attack, setup)
+    elif cfg_attack.attack_type == "cinet":
+        attacker = GANGradMatchingAttacker(model, loss, cfg_attack, setup)
     else:
         raise ValueError(f"Invalid type of attack {cfg_attack.attack_type} given.")
 
