@@ -42,18 +42,27 @@ def system_startup(process_idx, local_group_size, cfg):
 
     dtype = getattr(torch, cfg.case.impl.dtype)  # :> dont mess this up
 
-    if cfg.case.impl.enable_gpu_acc and torch.cuda.is_available():
-        device = torch.device(f"cuda:{process_idx}")
+    mps_available = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+    if cfg.case.impl.enable_gpu_acc:
+        if torch.cuda.is_available():
+            device = torch.device(f"cuda:{process_idx}")
+        elif mps_available:
+            device = torch.device("mps")
+        else:
+            device = torch.device("cpu")
     else:
         device = torch.device("cpu")
     setup = dict(device=device, dtype=dtype)
     python_version = sys.version.split(" (")[0]
     log.info(f"Platform: {sys.platform}, Python: {python_version}, PyTorch: {torch.__version__}")
-    log.info(f"CPUs: {torch.get_num_threads()}, GPUs: {torch.cuda.device_count()} on {socket.gethostname()}.")
+    gpu_count = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    log.info(f"CPUs: {torch.get_num_threads()}, GPUs: {gpu_count} on {socket.gethostname()}.")
 
-    if cfg.case.impl.enable_gpu_acc and torch.cuda.is_available():
+    if device.type == "cuda":
         torch.cuda.set_device(process_idx)
         log.info(f"GPU : {torch.cuda.get_device_name(device=device)}")
+    elif device.type == "mps":
+        log.info("GPU : Apple MPS")
 
     # if not torch.cuda.is_available() and not cfg.dryrun:
     #     raise ValueError('No GPU allocated to this process. Running in CPU-mode is likely a bad idea. Complain to your admin.')
@@ -172,10 +181,12 @@ def save_to_table(out_dir, table_name, dryrun, **kwargs):
 def set_random_seed(seed=233):
     """."""
     torch.manual_seed(seed + 1)
-    torch.cuda.manual_seed(seed + 2)
-    torch.cuda.manual_seed_all(seed + 3)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed + 2)
+        torch.cuda.manual_seed_all(seed + 3)
     np.random.seed(seed + 4)
-    torch.cuda.manual_seed_all(seed + 5)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed + 5)
     random.seed(seed + 6)
     # Can't be too careful :>
 
@@ -295,7 +306,7 @@ def dump_metrics(cfg, metrics):
     sanitized_metrics = dict()
     for metric, val in metrics.items():
         try:
-            if torch.is_tensor(val) and val.is_cuda:
+            if torch.is_tensor(val) and val.device.type != "cpu":
                 val = val.cpu()
             sanitized_metrics[metric] = np.asarray(val).item()
         except ValueError:

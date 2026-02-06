@@ -11,6 +11,8 @@ viz/
 outputs/
 logs/
 images/
+breaching/attacks/auxiliaries/BigGAN/models/
+pretrained/
 
 *.pth
 *.pt

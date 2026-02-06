@@ -9,3 +9,5 @@ STYLEGAN2ADA_CIFAR = "https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pre
 STYLEGAN2ADA_FFHQ1024 = "https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/ffhq.pkl"
 
 
+
+
