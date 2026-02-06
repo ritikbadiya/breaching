@@ -285,7 +285,14 @@ class BigGAN(nn.Module):
 
         # Instantiate model.
         model = cls(config, *inputs, **kwargs)
-        state_dict = torch.load(resolved_model_file, map_location='cpu' if not torch.cuda.is_available() else None)
+        mps_available = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+        if torch.cuda.is_available():
+            map_location = None
+        elif mps_available:
+            map_location = torch.device("mps")
+        else:
+            map_location = "cpu"
+        state_dict = torch.load(resolved_model_file, map_location=map_location)
         model.load_state_dict(state_dict, strict=False)
         return model
 
@@ -313,8 +320,8 @@ if __name__ == "__main__":
     load_cache = False
     cache_path = './saved_model.pt'
     config = BigGANConfig()
-    model = BigGAN(config).from_pretrained('./models/models_128', cache_dir='./models')
-    # model = BigGAN.from_pretrained('biggan-deep-128', cache_dir='./models/models_128')
+    # model = BigGAN(config).from_pretrained('./models/models_128', cache_dir='./models')
+    model = BigGAN.from_pretrained('biggan-deep-128', cache_dir='./models/models_128')
     # if not load_cache:
     #     model = load_tf_weights_in_biggan(model, config, './models/models_128', '') #'./models/batchnorms_stats.bin')
     #     torch.save(model.state_dict(), cache_path)

@@ -65,7 +65,8 @@ def make_biggan(model_name='biggan-deep-256') -> torch.nn.Module:
 
 if __name__ == '__main__':
     # Testing
-    device = torch.device('cuda')
+    mps_available = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+    device = torch.device("cuda" if torch.cuda.is_available() else "mps" if mps_available else "cpu")
     G = make_pretrained_biggan('biggan-deep-512')
     G.to(device).eval()
     print('Created G')

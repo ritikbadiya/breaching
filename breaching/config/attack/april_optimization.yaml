@@ -28,8 +28,8 @@ augmentations:
 differentiable_augmentations: False
 
 regularization:
-  # total_variation:
-  #   scale: 0.0
-  #   # 0.2 # The old version did not take the mean dx + dy as the new version, so this corresponds to 0.1 in the old repo
-  #   inner_exp: 1
-  #   outer_exp: 1
+  total_variation:
+    scale: 0.01
+    # 0.2 # The old version did not take the mean dx + dy as the new version, so this corresponds to 0.1 in the old repo
+    inner_exp: 1
+    outer_exp: 1
