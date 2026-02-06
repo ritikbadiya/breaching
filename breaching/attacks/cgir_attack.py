@@ -21,7 +21,7 @@ import logging
 
 log = logging.getLogger(__name__)
 
-class ConditionalGANGradMatchingAttacker(OptimizationBasedAttacker):
+class ConditionalGenInstRecAttacker(OptimizationBasedAttacker):
     """Implements an optimization-based attack that only recovers the patch information 
     by opyimization L2 loss on the the parameter gradients.
     And also optimizes the cosine similarity loss on the PosEmbed gradients
@@ -100,13 +100,13 @@ class ConditionalGANGradMatchingAttacker(OptimizationBasedAttacker):
         current_wallclock = time.time()
         try:
             for iteration in range(self.cfg.optim.max_iterations):
-                closure = self._compute_objective(self.netG, 
-                                                  self.noise,
-                                                    labels, 
-                                                    rec_model, 
-                                                    optimizer, 
-                                                    shared_data, # Contains both gradients and posembed gradients
-                                                    iteration)
+                closure = self._compute_coarse_objective(self.netG, 
+                                                        self.noise,
+                                                        labels, 
+                                                        rec_model, 
+                                                        optimizer, 
+                                                        shared_data, # Contains both gradients and posembed gradients
+                                                        iteration)
                 objective_value, task_loss = optimizer.step(closure), self.current_task_loss
                 scheduler.step()
 
@@ -141,13 +141,62 @@ class ConditionalGANGradMatchingAttacker(OptimizationBasedAttacker):
 
                 if dryrun:
                     break
+            
+            ###################################################
+            ### FINE LEVEL OPTIMIZATION STARTS HERE  ##########
+            ###################################################
+            log.info("Starting fine level optimization for trial {} with the best candidate from coarse optimization.".format(trial))
+
+            candidate = self.netG(torch.tensor(self.noise, dtype=torch.float).to(self.setup["device"]), 
+                                          torch.tensor(one_hot_from_int(labels, 
+                                                                        batch_size=self.batch_size, 
+                                                                        num_classes=self.num_classes), 
+                                                        dtype=torch.float).to(self.setup["device"]), 
+                                          self.truncation)
+            candidate.requires_grad_(True)
+            best_candidate = candidate.detach().clone()
+            minimal_value_so_far = torch.as_tensor(float("inf"), **self.setup)
+
+            # Initialize optimizers
+            optimizer, scheduler = self._init_optimizer([candidate])
+            current_wallclock = time.time()
+            for iteration in range(self.cfg.optim.fine_iterations):
+                closure = self._compute_objective(candidate, labels, rec_model, optimizer, shared_data, iteration)
+                objective_value, task_loss = optimizer.step(closure), self.current_task_loss
+                scheduler.step()
+
+                with torch.no_grad():
+                    # Project into image space
+                    if self.cfg.optim.boxed:
+                        candidate.data = torch.max(torch.min(candidate, (1 - self.dm) / self.ds), -self.dm / self.ds)
+                    if objective_value < minimal_value_so_far:
+                        minimal_value_so_far = objective_value.detach()
+                        best_candidate = candidate.detach().clone()
+
+                if iteration + 1 == self.cfg.optim.fine_iterations or iteration % self.cfg.optim.callback == 0:
+                    timestamp = time.time()
+                    log.info(
+                        f"| It: {iteration + 1} | Rec. loss: {objective_value.item():2.4f} | "
+                        f" Task loss: {task_loss.item():2.4f} | T: {timestamp - current_wallclock:4.2f}s"
+                    )
+                    current_wallclock = timestamp
+
+                if not torch.isfinite(objective_value):
+                    log.info(f"Recovery loss is non-finite in iteration {iteration}. Cancelling reconstruction!")
+                    break
+
+                stats[f"Trial_{trial}_Val"].append(objective_value.item())
+
+                if dryrun:
+                    break
+
         except KeyboardInterrupt:
             print(f"Recovery interrupted manually in iteration {iteration}!")
             pass
 
         return best_candidate.detach()
 
-    def _compute_objective(self, netG, noise, labels, rec_model, optimizer, shared_data, iteration):
+    def _compute_coarse_objective(self, netG, noise, labels, rec_model, optimizer, shared_data, iteration):
         def closure():
             optimizer.zero_grad()
             
@@ -175,7 +224,10 @@ class ConditionalGANGradMatchingAttacker(OptimizationBasedAttacker):
                 total_objective += objective
                 total_task_loss += task_loss
             for regularizer in self.regularizers:
-                total_objective += regularizer(candidate_augmented)
+                if regularizer.__class__.__name__ == "LabelRegularization":
+                    total_objective += regularizer(model(candidate_augmented), labels) #.argmax(dim=-1)
+                else:
+                    total_objective += regularizer(candidate_augmented)
 
             if total_objective.requires_grad:
                 candidate_grad = torch.autograd.grad(total_objective, candidate, create_graph=False)[0]
@@ -207,3 +259,5 @@ class ConditionalGANGradMatchingAttacker(OptimizationBasedAttacker):
             return total_objective
 
         return closure
+
+    

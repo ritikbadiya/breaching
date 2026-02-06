@@ -49,6 +49,13 @@ class L2Regularization(torch.nn.Module):
             return torch.pow(tensor - kwargs['target'], 2).mean() * self.scale
         return torch.pow(tensor, 2).mean() * self.scale
 
+class LabelRegularization(L2Regularization):
+    """L2 regularization on the label embedding space."""
+
+    def __init__(self, setup, scale=0.1):
+        super().__init__(setup, scale)
+
+
 class L1Regularization(torch.nn.Module):
     """L1 regularization implemented for the last linear layer at the end."""
 
@@ -599,4 +606,6 @@ regularizer_lookup = dict(
     sign_regularization=SignRegularization,
     mi_regularization=MIRegularization,
     l2_regularization=L2Regularization,
+    label_regularization=LabelRegularization,
+    l1_regularization=L1Regularization,
 )
