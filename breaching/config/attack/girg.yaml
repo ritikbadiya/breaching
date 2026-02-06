@@ -18,8 +18,8 @@ restarts:
 optim:
   optimizer: adam
   signed:
-  step_size: 0.001
-  boxed: True
+  step_size: 0.01
+  boxed: False
   max_iterations: 20_000
   step_size_decay: step-lr
 

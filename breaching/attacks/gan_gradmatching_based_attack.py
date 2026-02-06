@@ -47,6 +47,33 @@ class GANGradMatchingAttacker(OptimizationBasedAttacker):
             model_params = sum(p.numel() for p in Generator(in_channel=channel).parameters())
         return channel
 
+    def reconstruct(self, server_payload, shared_data, server_secrets=None, initial_data=None, dryrun=False):
+        # Initialize stats module for later usage:
+        rec_models, labels, stats = self.prepare_attack(server_payload, shared_data)
+        # Main reconstruction loop starts here:
+        scores = torch.zeros(self.cfg.restarts.num_trials)
+        candidate_solutions = []
+        try:
+            for trial in range(self.cfg.restarts.num_trials):
+                candidate_solutions += [
+                    self._run_trial(rec_models, shared_data, labels, stats, trial, initial_data, dryrun)
+                ]
+                scores[trial] = self._score_trial(candidate_solutions[trial], labels, rec_models, shared_data)
+        except KeyboardInterrupt:
+            print("Trial procedure manually interruped.")
+            pass
+        optimal_solution = self._select_optimal_reconstruction(candidate_solutions, scores, stats)
+        reconstructed_data = dict(data=optimal_solution, labels=labels)
+        if server_payload[0]["metadata"].modality == "text":
+            reconstructed_data = self._postprocess_text_data(reconstructed_data)
+        if "ClassAttack" in server_secrets:
+            # Only a subset of images was actually reconstructed:
+            true_num_data = server_secrets["ClassAttack"]["true_num_data"]
+            reconstructed_data["data"] = torch.zeros([true_num_data, *self.data_shape], **self.setup)
+            reconstructed_data["data"][server_secrets["ClassAttack"]["target_indx"]] = optimal_solution
+            reconstructed_data["labels"] = server_secrets["ClassAttack"]["all_labels"]
+        return reconstructed_data, stats
+
     def _run_trial(self, rec_model, shared_data, labels, stats, trial, initial_data=None, dryrun=False):
         """Run a single reconstruction trial."""
         # Initialize losses:
@@ -113,6 +140,8 @@ class GANGradMatchingAttacker(OptimizationBasedAttacker):
         except KeyboardInterrupt:
             print(f"Recovery interrupted manually in iteration {iteration}!")
             pass
+
+        self.netG = None  # Free up memory
 
         return best_candidate.detach()
 
