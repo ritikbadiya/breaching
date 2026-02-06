@@ -15,10 +15,60 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.functional import normalize
 
-from model import BigGAN, WEIGHTS_NAME, CONFIG_NAME
-from config import BigGANConfig
+try:
+    from model import BigGAN, WEIGHTS_NAME, CONFIG_NAME
+    from config import BigGANConfig
+except ImportError:
+    from .model import BigGAN, WEIGHTS_NAME, CONFIG_NAME
+    from .config import BigGANConfig
+
 
 logger = logging.getLogger(__name__)
+
+
+def _import_tf_checkpoint_reader():
+    try:
+        from .tf_checkpoint_reader import load_variable, load_variables  # type: ignore
+    except Exception:
+        from tf_checkpoint_reader import load_variable, load_variables  # type: ignore
+    return load_variable, load_variables
+
+
+def extract_batch_norm_stats_from_checkpoint(tf_model_path, batch_norm_stats_path=None):
+    """Attempt to extract BigGAN standing BN stats directly from a TF checkpoint.
+
+    This is a TF-free best-effort replacement for `extract_batch_norm_stats`.
+    It tries to load `module_apply_default/stack_*` tensors from the checkpoint
+    at `${tf_model_path}/variables/variables` using TensorStore.
+
+    Note: This only works if those tensors are actually stored in the checkpoint.
+    """
+    load_variable, _ = _import_tf_checkpoint_reader()
+
+    checkpoint_path = tf_model_path + "/variables/variables"
+    stacks = sum(((i * 10 + 1, i * 10 + 3, i * 10 + 6, i * 10 + 8) for i in range(50)), ())
+    numpy_stacks = []
+    for i in stacks:
+        name = f"module_apply_default/stack_{i}"
+        logger.info("Retrieving %s from checkpoint", name)
+        try:
+            numpy_stacks.append(load_variable(checkpoint_path, name))
+        except Exception as exc:
+            message = str(exc)
+            if "TensorStore was installed without the `tensorflow` driver" in message:
+                raise
+            if len(numpy_stacks) == 0:
+                raise RuntimeError(
+                    "Could not find any `module_apply_default/stack_*` tensors in the TF checkpoint. "
+                    "This checkpoint likely does not store standing BN statistics. "
+                    "Provide `batch_norm_stats_path` or install TensorFlow+TF Hub to extract them."
+                ) from exc
+            break  # We have all the stats
+
+    if batch_norm_stats_path is not None:
+        torch.save(numpy_stacks, batch_norm_stats_path)
+    else:
+        return numpy_stacks
 
 
 def extract_batch_norm_stats(tf_model_path, batch_norm_stats_path=None):
@@ -27,10 +77,11 @@ def extract_batch_norm_stats(tf_model_path, batch_norm_stats_path=None):
         import tensorflow as tf
         import tensorflow_hub as hub
     except ImportError:
-        raise ImportError("Loading a TensorFlow models in PyTorch, requires TensorFlow and TF Hub to be installed. "
-                          "Please see https://www.tensorflow.org/install/ for installation instructions for TensorFlow. "
-                          "And see https://github.com/tensorflow/hub for installing Hub. "
-                          "Probably pip install tensorflow tensorflow-hub")
+        logger.info("TensorFlow not available; trying TF-free BN stats extraction from checkpoint.")
+        return extract_batch_norm_stats_from_checkpoint(tf_model_path, batch_norm_stats_path=batch_norm_stats_path)
+    if hasattr(tf, "compat") and hasattr(tf.compat, "v1"):
+        tf = tf.compat.v1
+        tf.disable_eager_execution()
     tf.reset_default_graph()
     logger.info('Loading BigGAN module from: {}'.format(tf_model_path))
     module = hub.Module(tf_model_path)
@@ -40,6 +91,7 @@ def extract_batch_norm_stats(tf_model_path, batch_norm_stats_path=None):
 
     initializer = tf.global_variables_initializer()
     sess = tf.Session()
+    sess.run(initializer)
     stacks = sum(((i*10 + 1, i*10 + 3, i*10 + 6, i*10 + 8) for i in range(50)), ())
     numpy_stacks = []
     for i in stacks:
@@ -126,30 +178,79 @@ def load_tf_weights_in_biggan(model, config, tf_model_path, batch_norm_stats_pat
         tf_available = True
     except ImportError:
         tf_available = False
+        tf = None
     # Load weights from TF model
-    checkpoint_path = tf_model_path + "/variables/variables"
+    checkpoint_path = os.path.join(tf_model_path, "variables", "variables")
+    if not os.path.exists(checkpoint_path + ".index"):
+        latest = None
+        if tf_available and hasattr(tf, "train") and hasattr(tf.train, "latest_checkpoint"):
+            latest = tf.train.latest_checkpoint(tf_model_path)
+        elif tf_available and hasattr(tf, "compat") and hasattr(tf.compat, "v1") and hasattr(tf.compat.v1.train, "latest_checkpoint"):
+            latest = tf.compat.v1.train.latest_checkpoint(tf_model_path)
+        if latest is not None:
+            checkpoint_path = latest
+        else:
+            try:
+                from .tf_checkpoint_reader import resolve_checkpoint_prefix  # type: ignore
+            except Exception:
+                try:
+                    from tf_checkpoint_reader import resolve_checkpoint_prefix  # type: ignore
+                except Exception:
+                    resolve_checkpoint_prefix = None
+            if resolve_checkpoint_prefix is not None:
+                checkpoint_path = resolve_checkpoint_prefix(tf_model_path)
+    if not os.path.exists(checkpoint_path + ".index"):
+        raise ValueError(
+            "Could not find a TF checkpoint at "
+            f"'{checkpoint_path}.index' and no latest checkpoint was found in '{tf_model_path}'. "
+            "Point `tf_model_path` to a directory that contains a TF checkpoint "
+            "(e.g., with 'variables/variables.index' and 'variables/variables.data-*'), "
+            "or pass a checkpoint prefix directly."
+        )
+
     if tf_available:
-        init_vars = tf.train.list_variables(checkpoint_path)
-        from pprint import pprint
-        pprint(init_vars)
+        list_vars = None
+        if hasattr(tf, "train") and hasattr(tf.train, "list_variables"):
+            list_vars = tf.train.list_variables
+        elif hasattr(tf, "compat") and hasattr(tf.compat, "v1") and hasattr(tf.compat.v1.train, "list_variables"):
+            list_vars = tf.compat.v1.train.list_variables
+        if list_vars is not None:
+            init_vars = list_vars(checkpoint_path)
+            from pprint import pprint
+            pprint(init_vars)
+        else:
+            logger.warning(
+                "TensorFlow does not expose train.list_variables; skipping variable listing."
+            )
 
     # Extract batch norm statistics from model if needed
+    stats = None
     if batch_norm_stats_path:
         stats = torch.load(batch_norm_stats_path)
-    else:
+    elif tf_available:
         logger.info("Extracting batch norm stats")
         stats = extract_batch_norm_stats(tf_model_path)
+    else:
+        logger.info("Trying TF-free batch norm stats extraction from checkpoint")
+        stats = extract_batch_norm_stats_from_checkpoint(tf_model_path)
 
     # Build TF to PyTorch weights loading map
     tf_to_pt_map = build_tf_to_pytorch_map(model, config)
 
     tf_weights = {}
     if tf_available:
+        load_var = None
+        if hasattr(tf, "train") and hasattr(tf.train, "load_variable"):
+            load_var = tf.train.load_variable
+        elif hasattr(tf, "compat") and hasattr(tf.compat, "v1") and hasattr(tf.compat.v1.train, "load_variable"):
+            load_var = tf.compat.v1.train.load_variable
+        if load_var is None:
+            raise RuntimeError("TensorFlow does not expose train.load_variable; cannot read checkpoint.")
         for name in tf_to_pt_map.keys():
-            array = tf.train.load_variable(checkpoint_path, name)
+            array = load_var(checkpoint_path, name)
             tf_weights[name] = array
     else:
-        from .tf_checkpoint_reader import load_variables
+        _, load_variables = _import_tf_checkpoint_reader()
         tf_weights = load_variables(checkpoint_path, tf_to_pt_map.keys())
         # logger.info("Loading TF weight {} with shape {}".format(name, array.shape))
 
@@ -190,39 +291,40 @@ def load_tf_weights_in_biggan(model, config, tf_model_path, batch_norm_stats_pat
                     module.weight_u.data = u
                     pt_params_pnt.add(module.weight_u.data_ptr())
 
-        # Load batch norm statistics
-        index = 0
-        for layer in model.generator.layers:
-            if not hasattr(layer, 'bn_0'):
-                continue
-            for i in range(4):  #  Batchnorms
-                bn_pointer = getattr(layer, 'bn_%d' % i)
-                pointer = bn_pointer.running_means
-                if pointer.shape != stats[index].shape:
-                    raise "Wrong dimensions: " + str((pointer.shape, stats[index].shape))
-                pointer.data = torch.from_numpy(stats[index])
-                pt_params_pnt.add(pointer.data_ptr())
+        # Load batch norm statistics if available
+        if stats is not None:
+            index = 0
+            for layer in model.generator.layers:
+                if not hasattr(layer, 'bn_0'):
+                    continue
+                for i in range(4):  #  Batchnorms
+                    bn_pointer = getattr(layer, 'bn_%d' % i)
+                    pointer = bn_pointer.running_means
+                    if pointer.shape != stats[index].shape:
+                        raise "Wrong dimensions: " + str((pointer.shape, stats[index].shape))
+                    pointer.data = torch.from_numpy(stats[index])
+                    pt_params_pnt.add(pointer.data_ptr())
 
-                pointer = bn_pointer.running_vars
-                if pointer.shape != stats[index+1].shape:
-                    raise "Wrong dimensions: " + str((pointer.shape, stats[index].shape))
-                pointer.data = torch.from_numpy(stats[index+1])
-                pt_params_pnt.add(pointer.data_ptr())
+                    pointer = bn_pointer.running_vars
+                    if pointer.shape != stats[index+1].shape:
+                        raise "Wrong dimensions: " + str((pointer.shape, stats[index].shape))
+                    pointer.data = torch.from_numpy(stats[index+1])
+                    pt_params_pnt.add(pointer.data_ptr())
 
-                index += 2
+                    index += 2
 
-        bn_pointer = model.generator.bn
-        pointer = bn_pointer.running_means
-        if pointer.shape != stats[index].shape:
-            raise "Wrong dimensions: " + str((pointer.shape, stats[index].shape))
-        pointer.data = torch.from_numpy(stats[index])
-        pt_params_pnt.add(pointer.data_ptr())
+            bn_pointer = model.generator.bn
+            pointer = bn_pointer.running_means
+            if pointer.shape != stats[index].shape:
+                raise "Wrong dimensions: " + str((pointer.shape, stats[index].shape))
+            pointer.data = torch.from_numpy(stats[index])
+            pt_params_pnt.add(pointer.data_ptr())
 
-        pointer = bn_pointer.running_vars
-        if pointer.shape != stats[index+1].shape:
-            raise "Wrong dimensions: " + str((pointer.shape, stats[index].shape))
-        pointer.data = torch.from_numpy(stats[index+1])
-        pt_params_pnt.add(pointer.data_ptr())
+            pointer = bn_pointer.running_vars
+            if pointer.shape != stats[index+1].shape:
+                raise "Wrong dimensions: " + str((pointer.shape, stats[index].shape))
+            pointer.data = torch.from_numpy(stats[index+1])
+            pt_params_pnt.add(pointer.data_ptr())
 
     remaining_params = list(n for n, t in chain(model.named_parameters(), model.named_buffers()) \
                             if t.data_ptr() not in pt_params_pnt)

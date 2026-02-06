@@ -46,7 +46,15 @@ def load_variable(checkpoint_prefix: str, name: str):
     ts = _require_tensorstore()
     ckpt = resolve_checkpoint_prefix(checkpoint_prefix)
     spec = {"driver": "tensorflow", "path": ckpt, "variable": name}
-    tensor = ts.open(spec, open=True).result()
+    try:
+        tensor = ts.open(spec, open=True).result()
+    except ValueError as exc:
+        raise RuntimeError(
+            "TensorStore was installed without the `tensorflow` driver. "
+            "Install a TensorStore build that includes TF checkpoint support, "
+            "or use TensorFlow+TF Hub to extract BN stats, or provide "
+            "`batch_norm_stats_path`."
+        ) from exc
     return tensor.read().result()
 
 
@@ -55,4 +63,3 @@ def load_variables(checkpoint_prefix: str, names: Iterable[str]) -> Dict[str, ob
     Load multiple variables from a TF checkpoint prefix.
     """
     return {name: load_variable(checkpoint_prefix, name) for name in names}
-
