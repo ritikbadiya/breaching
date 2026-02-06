@@ -48,13 +48,7 @@ class ConditionalGenInstRecAttacker(OptimizationBasedAttacker):
         elif hasattr(server_payload[0]["metadata"], "name") and "ImageNet" in server_payload[0]["metadata"].name:
             self.bigganconfig = BigGAN256
         self.bigganconfig.num_classes = self.num_classes
-        # GIRG Does not require a pre-trained BigGAN
-        # so we can directly use the architecture and randomly initialized weights for the attack
-        self.netG = BigGAN(self.bigganconfig).to(self.setup["device"])
-        log.info("The number of parameters in the generator is {}".format(sum(p.numel() for p in self.netG.parameters())))
-        # log.info(f"self.netG.embeddings.weight.shape = {self.netG.embeddings.weight.shape}")
-        for p in self.netG.parameters():
-            p.requires_grad = True
+        
         # Main reconstruction loop starts here:
         scores = torch.zeros(self.cfg.restarts.num_trials)
         candidate_solutions = []
@@ -87,7 +81,13 @@ class ConditionalGenInstRecAttacker(OptimizationBasedAttacker):
         self.objective.initialize(self.loss_fn, self.cfg.impl, shared_data[0]["metadata"]["local_hyperparams"])
         # Initialize candidate reconstruction data
         self.batch_size = shared_data[0]["metadata"]["num_data_points"]
-        
+        # GIRG Does not require a pre-trained BigGAN
+        # so we can directly use the architecture and randomly initialized weights for the attack
+        self.netG = BigGAN(self.bigganconfig).to(self.setup["device"])
+        log.info("The number of parameters in the generator is {}".format(sum(p.numel() for p in self.netG.parameters())))
+        # log.info(f"self.netG.embeddings.weight.shape = {self.netG.embeddings.weight.shape}")
+        for p in self.netG.parameters():
+            p.requires_grad = True
         # Define noise        
         self.noise = truncated_noise_sample(batch_size=self.batch_size, 
                                             dim_z=self.netG.config.z_dim, 
@@ -146,6 +146,9 @@ class ConditionalGenInstRecAttacker(OptimizationBasedAttacker):
             ### FINE LEVEL OPTIMIZATION STARTS HERE  ##########
             ###################################################
             log.info("Starting fine level optimization for trial {} with the best candidate from coarse optimization.".format(trial))
+            for p in self.netG.parameters():
+                p.requires_grad = False
+
             with torch.no_grad():
                 candidate = self.netG(torch.tensor(self.noise, dtype=torch.float).to(self.setup["device"]), 
                                             torch.tensor(one_hot_from_int(labels, 
@@ -156,6 +159,7 @@ class ConditionalGenInstRecAttacker(OptimizationBasedAttacker):
             
             candidate = candidate.detach().clone()
             candidate = candidate.requires_grad_(requires_grad = True)
+            
             best_candidate = candidate.detach().clone()
             minimal_value_so_far = torch.as_tensor(float("inf"), **self.setup)
 
@@ -196,6 +200,8 @@ class ConditionalGenInstRecAttacker(OptimizationBasedAttacker):
             print(f"Recovery interrupted manually in iteration {iteration}!")
             pass
 
+        self.netG = None # Free up memory
+
         return best_candidate.detach()
 
     def _compute_coarse_objective(self, netG, noise, labels, rec_model, optimizer, shared_data, iteration):
@@ -220,14 +226,16 @@ class ConditionalGenInstRecAttacker(OptimizationBasedAttacker):
             total_objective = 0
             total_task_loss = 0
             for model, data in zip(rec_model, shared_data):
-
                 # data["gradients"] is a list of gradients for each layer
                 objective, task_loss = self.objective(model, data["gradients"], candidate_augmented, labels)
                 total_objective += objective
                 total_task_loss += task_loss
             for regularizer in self.regularizers:
                 if regularizer.__class__.__name__ == "LabelRegularization":
-                    total_objective += regularizer(model(candidate_augmented), labels) #.argmax(dim=-1)
+                    predicted_label = model(candidate_augmented).argmax(dim=-1)
+                    predicted_label = one_hot_from_int(predicted_label, batch_size=self.batch_size, num_classes=self.num_classes)
+                    predicted_label = torch.tensor(predicted_label, dtype=torch.float).to(self.setup["device"])
+                    total_objective += regularizer(predicted_label, labels) #.argmax(dim=-1)
                 else:
                     total_objective += regularizer(candidate_augmented)
 

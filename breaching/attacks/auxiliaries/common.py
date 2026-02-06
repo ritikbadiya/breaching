@@ -17,7 +17,7 @@ def optimizer_lookup(params, optim_name, step_size, scheduler=None, warmup=0, ma
     elif optim_name.lower() == "l-bfgs":
         optimizer = torch.optim.LBFGS(params, lr=step_size)
     elif optim_name.lower() == "rmsprop":
-        optimizer = torch.optim.RMSprop(params, lr=step_size)
+        optimizer = torch.optim.RMSprop(params, lr=step_size, momentum=0.9, eps=1e-8)
     else:
         raise ValueError(f"Invalid optimizer {optim_name} given.")
 
