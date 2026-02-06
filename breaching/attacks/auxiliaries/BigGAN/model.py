@@ -21,8 +21,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from config import BigGANConfig
-from file_utils import cached_path
+try:
+    from .config import BigGANConfig
+    from .file_utils import cached_path
+except ImportError:
+    from config import BigGANConfig
+    from file_utils import cached_path
 
 logger = logging.getLogger(__name__)
 
@@ -205,8 +209,13 @@ class Generator(nn.Module):
         ch = config.channel_width
         condition_vector_dim = config.z_dim * 2
 
+        if not getattr(config, "layers", None):
+            raise ValueError("BigGAN config must define `layers`.")
+        base_channels_mult = config.layers[0][1]
+        self.base_channels_mult = base_channels_mult
+
         self.gen_z = snlinear(in_features=condition_vector_dim,
-                              out_features=4 * 4 * 16 * ch, eps=config.eps)
+                              out_features=4 * 4 * base_channels_mult * ch, eps=config.eps)
 
         layers = []
         for i, layer in enumerate(config.layers):
@@ -231,7 +240,7 @@ class Generator(nn.Module):
         # We use this conversion step to be able to use TF weights:
         # TF convention on shape is [batch, height, width, channels]
         # PT convention on shape is [batch, channels, height, width]
-        z = z.view(-1, 4, 4, 16 * self.config.channel_width)
+        z = z.view(-1, 4, 4, self.base_channels_mult * self.config.channel_width)
         z = z.permute(0, 3, 1, 2).contiguous()
 
         for i, layer in enumerate(self.layers):
@@ -298,24 +307,26 @@ class BigGAN(nn.Module):
 
 if __name__ == "__main__":
     import PIL
-    from utils import truncated_noise_sample, save_as_images, one_hot_from_names
+    from utils import truncated_noise_sample, save_as_images, one_hot_from_names, one_hot_from_int
     from convert_tf_to_pytorch import load_tf_weights_in_biggan
 
     load_cache = False
     cache_path = './saved_model.pt'
     config = BigGANConfig()
-    model = BigGAN(config).from_pretrained('biggan-deep-128', cache_dir='./models')
-    if not load_cache:
-        model = load_tf_weights_in_biggan(model, config, './models/model_128/', './models/model_128/batchnorms_stats.bin')
-        torch.save(model.state_dict(), cache_path)
-    else:
-        model.load_state_dict(torch.load(cache_path))
+    model = BigGAN(config).from_pretrained('./models/models_128', cache_dir='./models')
+    # model = BigGAN.from_pretrained('biggan-deep-128', cache_dir='./models/models_128')
+    # if not load_cache:
+    #     model = load_tf_weights_in_biggan(model, config, './models/models_128', '') #'./models/batchnorms_stats.bin')
+    #     torch.save(model.state_dict(), cache_path)
+    # else:
+    #     model.load_state_dict(torch.load(cache_path))
 
     model.eval()
 
     truncation = 0.4
     noise = truncated_noise_sample(batch_size=2, truncation=truncation)
-    label = one_hot_from_names('diver', batch_size=2)
+    # label = one_hot_from_names('diver', batch_size=2)
+    label = one_hot_from_int(999, batch_size=2)
 
     # Tests
     # noise = np.zeros((1, 128))

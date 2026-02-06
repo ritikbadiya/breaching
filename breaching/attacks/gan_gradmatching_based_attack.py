@@ -54,7 +54,7 @@ class GANGradMatchingAttacker(OptimizationBasedAttacker):
             regularizer.initialize(rec_model, shared_data, labels)
         self.objective.initialize(self.loss_fn, self.cfg.impl, shared_data[0]["metadata"]["local_hyperparams"])
         # Initialize candidate reconstruction data
-        # candidate = self._initialize_data([shared_data[0]["metadata"]["num_data_points"], *self.data_shape])
+        
         self.batch_size = shared_data[0]["metadata"]["num_data_points"]
         channel = self.over_parameterization(batch_size = self.batch_size, img_res = self.data_shape[-1], channels=self.data_shape[0])
         log.info("The channel number is {}".format(channel))
@@ -65,10 +65,7 @@ class GANGradMatchingAttacker(OptimizationBasedAttacker):
         for p in self.netG.parameters():
             p.requires_grad = True
         self.noise = torch.randn(self.batch_size, 128, device=self.setup["device"]) # nz = 128
-        # if initial_data is not None:
-        #     candidate.data = initial_data.data.clone().to(**self.setup)
-        # log.info("Norm of Generator parameters before optimization: {}".format(sum(p.norm().item() for p in self.netG.parameters())))
-        # best_candidate = candidate.detach().clone()
+
         minimal_value_so_far = torch.as_tensor(float("inf"), **self.setup)
 
         # Initialize optimizers
@@ -134,10 +131,6 @@ class GANGradMatchingAttacker(OptimizationBasedAttacker):
             total_task_loss = 0
             for model, data in zip(rec_model, shared_data):
 
-                # data["gradients"] is a list of gradients for each layer
-                # log.info(f"Length of data['gradients']: {len(data['gradients'])}, type(data['gradients']): {type(data['gradients'])}")
-                # fake_loss = torch.nn.functional.cross_entropy(rec_model(candidate_augmented), labels)
-                # fake_dL_dw = torch.autograd.grad(fake_loss, rec_model.parameters(), create_graph=True)
                 objective, task_loss = self.objective(model, data["gradients"], candidate_augmented, labels)
                 total_objective += objective
                 total_task_loss += task_loss

@@ -42,6 +42,7 @@ def convert_to_images(obj):
     """
     try:
         import PIL
+        from PIL import Image
     except ImportError:
         raise ImportError("Please install Pillow to use images: pip install Pillow")
 
@@ -54,7 +55,7 @@ def convert_to_images(obj):
     img = []
     for i, out in enumerate(obj):
         out_array = np.asarray(np.uint8(out), dtype=np.uint8)
-        img.append(PIL.Image.fromarray(out_array))
+        img.append(Image.fromarray(out_array))
     return img
 
 
@@ -105,7 +106,7 @@ def display_in_terminal(obj):
     output_width = sum(widths)
     output_height = max(heights)
 
-    output_image = PIL.Image.new('RGB', (output_width, output_height))
+    output_image = Image.new('RGB', (output_width, output_height))
 
     x_offset = 0
     for im in images:
@@ -147,7 +148,7 @@ def display_in_terminal(obj):
         sixel_output_unref(output)
 
 
-def one_hot_from_int(int_or_list, batch_size=1):
+def one_hot_from_int(int_or_list, batch_size=1, num_classes=NUM_CLASSES):
     """ Create a one-hot vector from a class index or a list of class indices.
         Params:
             int_or_list: int, or list of int, of the imagenet classes (between 0 and 999)
@@ -165,7 +166,7 @@ def one_hot_from_int(int_or_list, batch_size=1):
 
     assert batch_size == len(int_or_list)
 
-    array = np.zeros((batch_size, NUM_CLASSES), dtype=np.float32)
+    array = np.zeros((batch_size, num_classes), dtype=np.float32)
     for i, j in enumerate(int_or_list):
         array[i, j] = 1.0
     return array

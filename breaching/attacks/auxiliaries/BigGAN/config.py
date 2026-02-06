@@ -68,3 +68,60 @@ class BigGANConfig(object):
     def to_json_string(self):
         """Serializes this instance to a JSON string."""
         return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
+
+
+
+BigGAN32 = BigGANConfig(output_dim=32, z_dim=128, class_embed_dim=128, channel_width=128, num_classes=10,
+                         layers=[(False, 8, 8),
+                                 (True, 8, 4),
+                                 (False, 4, 4),
+                                 (True, 4, 2),
+                                 (False, 2, 2),
+                                 (True, 2, 1)],
+                         attention_layer_position=8, eps=1e-4, n_stats=51)
+
+
+BigGAN128 = BigGANConfig(output_dim=128, z_dim=128, class_embed_dim=128, channel_width=128, num_classes=1000,
+                         layers=[(False, 16, 16),
+                                 (True, 16, 16),
+                                 (False, 16, 16),
+                                 (True, 16, 8),
+                                 (False, 8, 8),
+                                 (True, 8, 4),
+                                 (False, 4, 4),
+                                 (True, 4, 2),
+                                 (False, 2, 2),
+                                 (True, 2, 1)],
+                         attention_layer_position=8, eps=1e-4, n_stats=51)
+
+BigGAN256 = BigGANConfig(output_dim=256, z_dim=128, class_embed_dim=128, channel_width=128, num_classes=1000,
+                         layers=[(False, 16, 16),
+                                 (True, 16, 16),
+                                 (False, 16, 16),
+                                 (True, 16, 8),
+                                 (False, 8, 8),
+                                 (True, 8, 8),
+                                 (False, 8, 8),
+                                 (True, 8, 4),
+                                 (False, 4, 4),
+                                 (True, 4, 2),
+                                 (False, 2, 2),
+                                 (True, 2, 1)],
+                         attention_layer_position=8, eps=1e-4, n_stats=51)
+
+BigGAN512 = BigGANConfig(output_dim=512, z_dim=128, class_embed_dim=128, channel_width=128, num_classes=1000,
+                         layers=[(False, 16, 16),
+                                 (True, 16, 16),
+                                 (False, 16, 16),
+                                 (True, 16, 8),
+                                 (False, 8, 8),
+                                 (True, 8, 8),
+                                 (False, 8, 8),
+                                 (True, 8, 4),
+                                 (False, 4, 4),
+                                 (True, 4, 2),
+                                 (False, 2, 2),
+                                 (True, 2, 1),
+                                 (False, 1, 1),
+                                 (True, 1, 1)],
+                         attention_layer_position=8, eps=1e-4, n_stats=51)

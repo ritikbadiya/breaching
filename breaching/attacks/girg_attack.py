@@ -14,7 +14,8 @@ from .auxiliaries.objectives import Euclidean, CosineSimilarity, objective_looku
 from .auxiliaries.augmentations import augmentation_lookup
 
 from .auxiliaries.BigGAN.model import BigGAN, Generator
-from .auxiliaries.BigGAN.config import BigGANConfig
+from .auxiliaries.BigGAN.config import BigGANConfig, BigGAN32, BigGAN128, BigGAN256, BigGAN512
+from .auxiliaries.BigGAN.utils import truncated_noise_sample, save_as_images, one_hot_from_names, one_hot_from_int
 
 import logging
 
@@ -34,6 +35,35 @@ class ConditionalGANGradMatchingAttacker(OptimizationBasedAttacker):
             self.objective = objective_fn(scale=self.cfg.objective.scale, 
                                         task_regularization=self.cfg.objective.task_regularization,
                                         posembed_scale=self.cfg.objective.posembed_scale)
+        self.truncation = self.cfg.objective.truncation if hasattr(self.cfg.objective, 'truncation') else 0.4
+    def reconstruct(self, server_payload, shared_data, server_secrets=None, initial_data=None, dryrun=False):
+        # Initialize stats module for later usage:
+        rec_models, labels, stats = self.prepare_attack(server_payload, shared_data)
+        self.num_classes = server_payload[0]["metadata"]["classes"]
+        log.info(f"Number of classes in the dataset is {self.num_classes}.")
+        # Main reconstruction loop starts here:
+        scores = torch.zeros(self.cfg.restarts.num_trials)
+        candidate_solutions = []
+        try:
+            for trial in range(self.cfg.restarts.num_trials):
+                candidate_solutions += [
+                    self._run_trial(rec_models, shared_data, labels, stats, trial, initial_data, dryrun)
+                ]
+                scores[trial] = self._score_trial(candidate_solutions[trial], labels, rec_models, shared_data)
+        except KeyboardInterrupt:
+            print("Trial procedure manually interruped.")
+            pass
+        optimal_solution = self._select_optimal_reconstruction(candidate_solutions, scores, stats)
+        reconstructed_data = dict(data=optimal_solution, labels=labels)
+        if server_payload[0]["metadata"].modality == "text":
+            reconstructed_data = self._postprocess_text_data(reconstructed_data)
+        if "ClassAttack" in server_secrets:
+            # Only a subset of images was actually reconstructed:
+            true_num_data = server_secrets["ClassAttack"]["true_num_data"]
+            reconstructed_data["data"] = torch.zeros([true_num_data, *self.data_shape], **self.setup)
+            reconstructed_data["data"][server_secrets["ClassAttack"]["target_indx"]] = optimal_solution
+            reconstructed_data["labels"] = server_secrets["ClassAttack"]["all_labels"]
+        return reconstructed_data, stats
 
     def _run_trial(self, rec_model, shared_data, labels, stats, trial, initial_data=None, dryrun=False):
         """Run a single reconstruction trial."""
@@ -42,29 +72,30 @@ class ConditionalGANGradMatchingAttacker(OptimizationBasedAttacker):
             regularizer.initialize(rec_model, shared_data, labels)
         self.objective.initialize(self.loss_fn, self.cfg.impl, shared_data[0]["metadata"]["local_hyperparams"])
         # Initialize candidate reconstruction data
-        # candidate = self._initialize_data([shared_data[0]["metadata"]["num_data_points"], *self.data_shape])
         self.batch_size = shared_data[0]["metadata"]["num_data_points"]
         
         # Define Generator and noise        
-        bigganconfig = BigGANConfig()
-        self.netG = BigGAN(BigGANConfig()).to(self.setup["device"])
+        # GIRG Does not require a pre-trained BigGAN
+        # so we can directly use the architecture and randomly initialized weights for the attack
+        bigganconfig = BigGAN32
+        bigganconfig.num_classes = self.num_classes
+        self.netG = BigGAN(bigganconfig).to(self.setup["device"])
+        # log.info(f"self.netG.embeddings.weight.shape = {self.netG.embeddings.weight.shape}")
         for p in self.netG.parameters():
             p.requires_grad = True
-        self.noise = torch.randn(self.batch_size, 128, device=self.setup["device"]) # nz = 128
-        # if initial_data is not None:
-        #     candidate.data = initial_data.data.clone().to(**self.setup)
-        # log.info("Norm of Generator parameters before optimization: {}".format(sum(p.norm().item() for p in self.netG.parameters())))
-        # best_candidate = candidate.detach().clone()
+        self.noise = truncated_noise_sample(batch_size=self.batch_size, 
+                                            dim_z=self.netG.config.z_dim, 
+                                            truncation=self.truncation)
+        
         minimal_value_so_far = torch.as_tensor(float("inf"), **self.setup)
-
         # Initialize optimizers
-        # In CI-Net, we optimzie the parameters ofthe Generator network instead of the image pixels directly
+        # In GIRG, we optimzie the parameters ofthe Generator network instead of the image pixels directly
         optimizer, scheduler = self._init_optimizer([p for p in self.netG.parameters()])
         current_wallclock = time.time()
         try:
             for iteration in range(self.cfg.optim.max_iterations):
-                closure = self._compute_objective(self.netG,
-                                                  self.noise, 
+                closure = self._compute_objective(self.netG, 
+                                                  self.noise,
                                                     labels, 
                                                     rec_model, 
                                                     optimizer, 
@@ -75,7 +106,12 @@ class ConditionalGANGradMatchingAttacker(OptimizationBasedAttacker):
 
                 with torch.no_grad():
                     # Project into image space
-                    candidate = self.netG(self.noise)
+                    candidate = self.netG(torch.tensor(self.noise, dtype=torch.float).to(self.setup["device"]), 
+                                          torch.tensor(one_hot_from_int(labels, 
+                                                                        batch_size=self.batch_size, 
+                                                                        num_classes=self.num_classes), 
+                                                        dtype=torch.float).to(self.setup["device"]), 
+                                          self.truncation)
                     if self.cfg.optim.boxed:
                         candidate.data = torch.max(torch.min(candidate, (1 - self.dm) / self.ds), -self.dm / self.ds)
                     if objective_value < minimal_value_so_far:
@@ -108,7 +144,14 @@ class ConditionalGANGradMatchingAttacker(OptimizationBasedAttacker):
     def _compute_objective(self, netG, noise, labels, rec_model, optimizer, shared_data, iteration):
         def closure():
             optimizer.zero_grad()
-            candidate = netG(noise)
+            
+            # GENERATION
+            label = one_hot_from_int(labels, batch_size=self.batch_size, num_classes=self.num_classes)
+            noise_t = torch.tensor(noise, dtype=torch.float).to(self.setup["device"])
+            label = torch.tensor(label, dtype=torch.float).to(self.setup["device"])
+            # cond_vector = torch.cat((noise_t, netG.embeddings(label)), dim=1)
+            # candidate = netG.generator(cond_vector, self.truncation)
+            candidate = netG(noise_t, label, self.truncation)
 
             if self.cfg.differentiable_augmentations:
                 candidate_augmented = self.augmentations(candidate)
@@ -121,9 +164,6 @@ class ConditionalGANGradMatchingAttacker(OptimizationBasedAttacker):
             for model, data in zip(rec_model, shared_data):
 
                 # data["gradients"] is a list of gradients for each layer
-                # log.info(f"Length of data['gradients']: {len(data['gradients'])}, type(data['gradients']): {type(data['gradients'])}")
-                # fake_loss = torch.nn.functional.cross_entropy(rec_model(candidate_augmented), labels)
-                # fake_dL_dw = torch.autograd.grad(fake_loss, rec_model.parameters(), create_graph=True)
                 objective, task_loss = self.objective(model, data["gradients"], candidate_augmented, labels)
                 total_objective += objective
                 total_task_loss += task_loss
