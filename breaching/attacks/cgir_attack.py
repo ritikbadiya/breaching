@@ -146,14 +146,16 @@ class ConditionalGenInstRecAttacker(OptimizationBasedAttacker):
             ### FINE LEVEL OPTIMIZATION STARTS HERE  ##########
             ###################################################
             log.info("Starting fine level optimization for trial {} with the best candidate from coarse optimization.".format(trial))
-
-            candidate = self.netG(torch.tensor(self.noise, dtype=torch.float).to(self.setup["device"]), 
-                                          torch.tensor(one_hot_from_int(labels, 
-                                                                        batch_size=self.batch_size, 
-                                                                        num_classes=self.num_classes), 
-                                                        dtype=torch.float).to(self.setup["device"]), 
-                                          self.truncation)
-            candidate.requires_grad_(True)
+            with torch.no_grad():
+                candidate = self.netG(torch.tensor(self.noise, dtype=torch.float).to(self.setup["device"]), 
+                                            torch.tensor(one_hot_from_int(labels, 
+                                                                            batch_size=self.batch_size, 
+                                                                            num_classes=self.num_classes), 
+                                                            dtype=torch.float).to(self.setup["device"]), 
+                                            self.truncation)
+            
+            candidate = candidate.detach().clone()
+            candidate = candidate.requires_grad_(requires_grad = True)
             best_candidate = candidate.detach().clone()
             minimal_value_so_far = torch.as_tensor(float("inf"), **self.setup)
 

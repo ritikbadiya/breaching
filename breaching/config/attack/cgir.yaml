@@ -6,9 +6,9 @@ attack_type: cgir
 label-strategy: bias-corrected # yin used in paper, but bias_corrected is better in practice. See the paper for details.
 
 objective:
-  type: euclidean
+  type: euclidean-grad-cossim-posembed # cosine-similarity
   scale: 1.0 # need to have a much smaller scale like 0.0001 for euclidean objectives
-  posembed_scale: 0.01
+  posembed_scale: 0.1
   task_regularization: 0.0
 
 restarts:
@@ -21,15 +21,15 @@ optim:
   step_size: 0.01
   momentum: 0.9
   boxed: False
-  max_iterations: 200
+  max_iterations: 2000
   fine_iterations: 100
   step_size_decay: step-lr
 
-  callback: 50 # Print objective value every callback many iterations
+  callback: 100 # Print objective value every callback many iterations
 
 regularization:
   total_variation:
-    scale: 1e-6 #1
+    scale: 1e-2 #1
     # 0.2 # The old version did not take the mean dx + dy as the new version, so this corresponds to 0.1 in the old repo
     inner_exp: 1
     outer_exp: 1
