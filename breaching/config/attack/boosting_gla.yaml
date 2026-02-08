@@ -6,7 +6,7 @@ label_strategy: yin
 
 objective:
   type: boosting-euclidean
-  scale: 1e-1 # need to have a much smaller scale like 0.0001 for euclidean objectives
+  scale: 1e-4 # need to have a much smaller scale like 0.0001 for euclidean objectives
   max_iters: 20_000
 
 restarts:
