@@ -1,4 +1,4 @@
-""" Implements the CGIR attacks on ViT models.
+""" Implements the GISMN attacks on ViT models.
 This method uses L2 loss optimization for the parameter gradients,
 And the positional embedding gradients are also recovered using cosine similarity loss
 """
@@ -21,7 +21,7 @@ import logging
 
 log = logging.getLogger(__name__)
 
-class ConditionalGenInstRecAttacker(OptimizationBasedAttacker):
+class GenerativeStyleMigrationAttacker(OptimizationBasedAttacker):
     """Implements an optimization-based attack that only recovers the patch information 
     by opyimization L2 loss on the the parameter gradients.
     And also optimizes the cosine similarity loss on the PosEmbed gradients
@@ -48,7 +48,6 @@ class ConditionalGenInstRecAttacker(OptimizationBasedAttacker):
         elif hasattr(server_payload[0]["metadata"], "name") and "ImageNet" in server_payload[0]["metadata"].name:
             self.bigganconfig = BigGAN256
         self.bigganconfig.num_classes = self.num_classes
-        
         # Main reconstruction loop starts here:
         scores = torch.zeros(self.cfg.restarts.num_trials)
         candidate_solutions = []
@@ -80,44 +79,48 @@ class ConditionalGenInstRecAttacker(OptimizationBasedAttacker):
             regularizer.initialize(rec_model, shared_data, labels)
         self.objective.initialize(self.loss_fn, self.cfg.impl, shared_data[0]["metadata"]["local_hyperparams"])
         # Initialize candidate reconstruction data
+        
         self.batch_size = shared_data[0]["metadata"]["num_data_points"]
-        # GIRG Does not require a pre-trained BigGAN
+        # GISMN Does not require a pre-trained BigGAN. It uses pre-trained StyleGAN-XL models instead, 
+        # but we are primarily using BigGAN for now. Will change to StyleGAN-XL later
         # so we can directly use the architecture and randomly initialized weights for the attack
         self.netG = BigGAN(self.bigganconfig).to(self.setup["device"])
+        #.from_pretrained('biggan-deep-128', cache_dir='./pretrained/models_128').to(self.setup["device"])
+        self.netG.eval()
+        # self.netG = BigGAN(self.bigganconfig).to(self.setup["device"])
         log.info("The number of parameters in the generator is {}".format(sum(p.numel() for p in self.netG.parameters())))
         # log.info(f"self.netG.embeddings.weight.shape = {self.netG.embeddings.weight.shape}")
         for p in self.netG.parameters():
-            p.requires_grad = True
+            p.requires_grad = False
         # Define noise        
         self.noise = truncated_noise_sample(batch_size=self.batch_size, 
                                             dim_z=self.netG.config.z_dim, 
                                             truncation=self.truncation)
-        
+        self.noise = torch.tensor(self.noise, **self.setup).detach().clone().requires_grad_(True)
+
         minimal_value_so_far = torch.as_tensor(float("inf"), **self.setup)
+
         # Initialize optimizers
-        # In GIRG, we optimzie the parameters ofthe Generator network instead of the image pixels directly
-        optimizer, scheduler = self._init_optimizer([p for p in self.netG.parameters()])
+        # In CI-Net, we optimzie the parameters ofthe Generator network instead of the image pixels directly
+        optimizer, scheduler = self._init_optimizer([self.noise])
         current_wallclock = time.time()
         try:
             for iteration in range(self.cfg.optim.max_iterations):
-                closure = self._compute_coarse_objective(self.netG, 
-                                                        self.noise,
-                                                        labels, 
-                                                        rec_model, 
-                                                        optimizer, 
-                                                        shared_data, # Contains both gradients and posembed gradients
-                                                        iteration)
+                closure = self._compute_objective(self.netG,
+                                                  self.noise, 
+                                                    labels, 
+                                                    rec_model, 
+                                                    optimizer, 
+                                                    shared_data, # Contains both gradients and posembed gradients
+                                                    iteration)
                 objective_value, task_loss = optimizer.step(closure), self.current_task_loss
                 scheduler.step()
 
                 with torch.no_grad():
                     # Project into image space
-                    candidate = self.netG(torch.tensor(self.noise, dtype=torch.float).to(self.setup["device"]), 
-                                          torch.tensor(one_hot_from_int(labels, 
-                                                                        batch_size=self.batch_size, 
-                                                                        num_classes=self.num_classes), 
-                                                        dtype=torch.float).to(self.setup["device"]), 
-                                          self.truncation)
+                    label = one_hot_from_int(labels, batch_size=self.batch_size, num_classes=self.num_classes)
+                    label = torch.tensor(label, dtype=torch.float).to(self.setup["device"])
+                    candidate = self.netG(self.noise, label, truncation=self.truncation)
                     if self.cfg.optim.boxed:
                         candidate.data = torch.max(torch.min(candidate, (1 - self.dm) / self.ds), -self.dm / self.ds)
                     if objective_value < minimal_value_so_far:
@@ -141,81 +144,20 @@ class ConditionalGenInstRecAttacker(OptimizationBasedAttacker):
 
                 if dryrun:
                     break
-            
-            ###################################################
-            ### FINE LEVEL OPTIMIZATION STARTS HERE  ##########
-            ###################################################
-            log.info("Starting fine level optimization for trial {} with the best candidate from coarse optimization.".format(trial))
-            for p in self.netG.parameters():
-                p.requires_grad = False
-
-            with torch.no_grad():
-                candidate = self.netG(torch.tensor(self.noise, dtype=torch.float).to(self.setup["device"]), 
-                                            torch.tensor(one_hot_from_int(labels, 
-                                                                            batch_size=self.batch_size, 
-                                                                            num_classes=self.num_classes), 
-                                                            dtype=torch.float).to(self.setup["device"]), 
-                                            self.truncation)
-            
-            candidate = candidate.detach().clone()
-            candidate = candidate.requires_grad_(requires_grad = True)
-            
-            best_candidate = candidate.detach().clone()
-            minimal_value_so_far = torch.as_tensor(float("inf"), **self.setup)
-
-            # Initialize optimizers
-            optimizer, scheduler = self._init_optimizer([candidate])
-            current_wallclock = time.time()
-            for iteration in range(self.cfg.optim.fine_iterations):
-                closure = self._compute_objective(candidate, labels, rec_model, optimizer, shared_data, iteration)
-                objective_value, task_loss = optimizer.step(closure), self.current_task_loss
-                scheduler.step()
-
-                with torch.no_grad():
-                    # Project into image space
-                    if self.cfg.optim.boxed:
-                        candidate.data = torch.max(torch.min(candidate, (1 - self.dm) / self.ds), -self.dm / self.ds)
-                    if objective_value < minimal_value_so_far:
-                        minimal_value_so_far = objective_value.detach()
-                        best_candidate = candidate.detach().clone()
-
-                if iteration + 1 == self.cfg.optim.fine_iterations or iteration % self.cfg.optim.callback == 0:
-                    timestamp = time.time()
-                    log.info(
-                        f"| It: {iteration + 1} | Rec. loss: {objective_value.item():2.4f} | "
-                        f" Task loss: {task_loss.item():2.4f} | T: {timestamp - current_wallclock:4.2f}s"
-                    )
-                    current_wallclock = timestamp
-
-                if not torch.isfinite(objective_value):
-                    log.info(f"Recovery loss is non-finite in iteration {iteration}. Cancelling reconstruction!")
-                    break
-
-                stats[f"Trial_{trial}_Val"].append(objective_value.item())
-
-                if dryrun:
-                    break
-
         except KeyboardInterrupt:
             print(f"Recovery interrupted manually in iteration {iteration}!")
             pass
 
-        self.netG = None # Free up memory
+        self.netG = None  # Free up memory
 
         return best_candidate.detach()
 
-    def _compute_coarse_objective(self, netG, noise, labels, rec_model, optimizer, shared_data, iteration):
+    def _compute_objective(self, netG, noise, labels, rec_model, optimizer, shared_data, iteration):
         def closure():
             optimizer.zero_grad()
-            
-            # GENERATION
             label = one_hot_from_int(labels, batch_size=self.batch_size, num_classes=self.num_classes)
-            noise_t = torch.tensor(noise, dtype=torch.float).to(self.setup["device"])
             label = torch.tensor(label, dtype=torch.float).to(self.setup["device"])
-            # cond_vector = torch.cat((noise_t, netG.embeddings(label)), dim=1)
-            # candidate = netG.generator(cond_vector, self.truncation)
-            candidate = netG(noise_t, label, self.truncation)
-            # log.info(f"candidate.shape = {candidate.shape}")
+            candidate = netG(noise, label, truncation=self.truncation)
 
             if self.cfg.differentiable_augmentations:
                 candidate_augmented = self.augmentations(candidate)
@@ -226,21 +168,15 @@ class ConditionalGenInstRecAttacker(OptimizationBasedAttacker):
             total_objective = 0
             total_task_loss = 0
             for model, data in zip(rec_model, shared_data):
-                # data["gradients"] is a list of gradients for each layer
+
                 objective, task_loss = self.objective(model, data["gradients"], candidate_augmented, labels)
                 total_objective += objective
                 total_task_loss += task_loss
             for regularizer in self.regularizers:
-                if regularizer.__class__.__name__ == "LabelRegularization":
-                    predicted_label = model(candidate_augmented).argmax(dim=-1)
-                    predicted_label = one_hot_from_int(predicted_label, batch_size=self.batch_size, num_classes=self.num_classes)
-                    predicted_label = torch.tensor(predicted_label, dtype=torch.float).to(self.setup["device"])
-                    total_objective += regularizer(predicted_label, labels) #.argmax(dim=-1)
-                else:
-                    total_objective += regularizer(candidate_augmented)
+                total_objective += regularizer(candidate_augmented)
 
             if total_objective.requires_grad:
-                candidate_grad = torch.autograd.grad(total_objective, candidate, create_graph=False)[0]
+                candidate_grad = torch.autograd.grad(total_objective, noise, create_graph=False)[0]
                 with torch.no_grad():
                     if self.cfg.optim.langevin_noise > 0:
                         step_size = optimizer.param_groups[0]["lr"]
@@ -260,7 +196,7 @@ class ConditionalGenInstRecAttacker(OptimizationBasedAttacker):
                             candidate_grad.sign_()
                         else:
                             pass
-                candidate.backward(candidate_grad)
+                noise.backward(candidate_grad)
                 # candidate_grad = torch.autograd.grad(total_objective, netG.parameters(), create_graph=False)
                 # for p, g in zip(netG.parameters(), candidate_grad):
                 #     p.grad = g
@@ -269,5 +205,3 @@ class ConditionalGenInstRecAttacker(OptimizationBasedAttacker):
             return total_objective
 
         return closure
-
-    
