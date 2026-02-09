@@ -176,7 +176,7 @@ class GenImagePriorAttacker(OptimizationBasedAttacker):
                                             dim_z=self.netG.z_dim, 
                                             truncation=self.truncation)
         elif self.cfg.generator.type == "dcgan":
-            self.netG = DCGANGenerator(ngpu=1, nz=self.cfg.generator.z_dim, ngf=self.cfg.generator.ngf, nc=self.cfg.generator.nc).to(self.setup["device"])
+            self.netG = DCGANGenerator(nz=self.cfg.generator.z_dim, ngf=self.cfg.generator.ngf, nc=self.cfg.generator.nc).to(self.setup["device"])
             state = torch.load(self.cfg.generator.network_wts, map_location=self.setup["device"])
             # state = _unwrap_state_dict(state)
             # _load_state_dict_forgiving(self.netG, state)
@@ -189,6 +189,7 @@ class GenImagePriorAttacker(OptimizationBasedAttacker):
 
         log.info("The number of parameters in the generator is {}".format(sum(p.numel() for p in self.netG.parameters())))
         log.info("Shape of Noise is {}".format(self.noise.shape))
+        log.info("### OPTIMIZING LATENT CODE ONLY FOR TRIAL {} ###".format(trial))
         # log.info(f"self.netG.embeddings.weight.shape = {self.netG.embeddings.weight.shape}")
         for p in self.netG.parameters():
             p.requires_grad = False
@@ -252,44 +253,47 @@ class GenImagePriorAttacker(OptimizationBasedAttacker):
 
                 if dryrun:
                     break
-            
-            ###################################################
-            ### parameter OPTIMIZATION STARTS HERE  ##########
-            ###################################################
-            log.info("Starting fine level optimization for trial {} with the best candidate from coarse optimization.".format(trial))
-            for p in self.netG.parameters():
-                p.requires_grad = True
+        except KeyboardInterrupt:
+            print(f"Recovery interrupted manually in iteration {iteration}!")
+            pass
+        
+        log.info("### OPTIMIZING GENERATOR PARAMS ONLY FOR TRIAL {} ###".format(trial))
+        ###################################################
+        ### parameter OPTIMIZATION STARTS HERE  ###########
+        ###################################################
+        log.info("Starting fine level optimization for trial {} with the best candidate from coarse optimization.".format(trial))
+        for p in self.netG.parameters():
+            p.requires_grad = True
 
-            self.noise = self.noise.requires_grad_(False)
+        self.noise = self.noise.requires_grad_(False)
 
-            with torch.no_grad():
-                label = one_hot_from_int(labels, batch_size=self.batch_size, num_classes=self.num_classes)
-                label = torch.tensor(label, dtype=torch.float).to(self.setup["device"])
-                if self.cfg.generator.type == "biggan":
-                    # For BigGAN model
-                    candidate = self.netG(self.noise, label, truncation=self.truncation)
-                elif self.cfg.generator.type == "stylegan_xl":
-                    # For StyleGAN-XL model
-                    candidate = self.netG(self.noise, label, truncation_psi=self.truncation, noise_mode='random')
-                elif self.cfg.generator.type == "dcgan":
-                    candidate = self.netG(self.noise)
-            candidate = self._resize_dcgan_output(candidate)
-            
-            best_candidate = candidate.detach().clone()
-            minimal_value_so_far = torch.as_tensor(float("inf"), **self.setup)
+        with torch.no_grad():
+            label = one_hot_from_int(labels, batch_size=self.batch_size, num_classes=self.num_classes)
+            label = torch.tensor(label, dtype=torch.float).to(self.setup["device"])
+            if self.cfg.generator.type == "biggan":
+                # For BigGAN model
+                candidate = self.netG(self.noise, label, truncation=self.truncation)
+            elif self.cfg.generator.type == "stylegan_xl":
+                # For StyleGAN-XL model
+                candidate = self.netG(self.noise, label, truncation_psi=self.truncation, noise_mode='random')
+            elif self.cfg.generator.type == "dcgan":
+                candidate = self.netG(self.noise)
+        candidate = self._resize_dcgan_output(candidate)
+        
+        best_candidate = candidate.detach().clone()
+        minimal_value_so_far = torch.as_tensor(float("inf"), **self.setup)
+        # Initialize optimizers
+        # Since _init_optimizer only looks into self.cfg.optim,
+        # we need to manually overwrite the optimization parameters here to use the ones for parameter optimization
+        self.cfg.optim.optimizer = self.cfg.optim_w.optimizer
+        self.cfg.optim.step_size = self.cfg.optim_w.step_size
+        self.cfg.optim.max_iterations = self.cfg.optim_w.max_iterations
+        self.cfg.optim.callback = self.cfg.optim_w.callback
 
-            # Initialize optimizers
-            # Since _init_optimizer only looks into self.cfg.optim,
-            # we need to manually overwrite the optimization parameters here to use the ones for parameter optimization
-            self.cfg.optim.optimizer = self.cfg.optim_w.optimizer
-            self.cfg.optim.step_size = self.cfg.optim_w.step_size
-            self.cfg.optim.max_iterations = self.cfg.optim_w.max_iterations
-            self.cfg.optim.callback = self.cfg.optim_w.callback
-
-            optimizer, scheduler = self._init_optimizer([p for p in self.netG.parameters() if p.requires_grad])
-
-            current_wallclock = time.time()
-            for iteration in range(self.cfg.optim_w.max_iterations):
+        optimizer, scheduler = self._init_optimizer([p for p in self.netG.parameters() if p.requires_grad])
+        current_wallclock = time.time()
+        try:
+            for iteration in range(self.cfg.optim.max_iterations):
                 closure = self._compute_objective(self.netG, 
                                                     self.noise,
                                                     labels, rec_model, optimizer, shared_data, iteration)
@@ -316,7 +320,7 @@ class GenImagePriorAttacker(OptimizationBasedAttacker):
                         minimal_value_so_far = objective_value.detach()
                         best_candidate = candidate.detach().clone()
 
-                if iteration + 1 == self.cfg.optim.fine_iterations or iteration % self.cfg.optim.callback == 0:
+                if iteration + 1 == self.cfg.optim.max_iterations or iteration % self.cfg.optim.callback == 0:
                     timestamp = time.time()
                     log.info(
                         f"| It: {iteration + 1} | Rec. loss: {objective_value.item():2.4f} | "
@@ -346,19 +350,15 @@ class GenImagePriorAttacker(OptimizationBasedAttacker):
             optimizer.zero_grad()
             # GENERATION
             label = one_hot_from_int(labels, batch_size=self.batch_size, num_classes=self.num_classes)
-            # noise_t = torch.tensor(noise, dtype=torch.float).to(self.setup["device"])
             label = torch.tensor(label, dtype=torch.float).to(self.setup["device"])
-            # cond_vector = torch.cat((noise_t, netG.embeddings(label)), dim=1)
-            # candidate = netG.generator(cond_vector, self.truncation)
-            with torch.no_grad():
-                if self.cfg.generator.type == "biggan":
-                    # For BigGAN model
-                    candidate = netG(noise, label, truncation=self.truncation)
-                elif self.cfg.generator.type == "stylegan_xl":
-                    # For StyleGAN-XL model
-                    candidate = netG(noise, label, truncation_psi=self.truncation, noise_mode='random')
-                elif self.cfg.generator.type == "dcgan":
-                    candidate = netG(noise)
+            if self.cfg.generator.type == "biggan":
+                # For BigGAN model
+                candidate = netG(noise, label, truncation=self.truncation)
+            elif self.cfg.generator.type == "stylegan_xl":
+                # For StyleGAN-XL model
+                candidate = netG(noise, label, truncation_psi=self.truncation, noise_mode='random')
+            elif self.cfg.generator.type == "dcgan":
+                candidate = netG(noise)
             candidate = self._resize_dcgan_output(candidate)
             # log.info(f"candidate.shape = {candidate.shape}")
 
@@ -379,29 +379,28 @@ class GenImagePriorAttacker(OptimizationBasedAttacker):
                     total_objective += regularizer(candidate_augmented)
 
             if total_objective.requires_grad:
-                # candidate_grad = torch.autograd.grad(total_objective, candidate, create_graph=False)[0]
-                # with torch.no_grad():
-                #     if self.cfg.optim.langevin_noise > 0:
-                #         step_size = optimizer.param_groups[0]["lr"]
-                #         noise_map = torch.randn_like(candidate_grad)
-                #         candidate_grad += self.cfg.optim.langevin_noise * step_size * noise_map
-                #     if self.cfg.optim.grad_clip is not None:
-                #         grad_norm = candidate_grad.norm()
-                #         if grad_norm > self.cfg.optim.grad_clip:
-                #             candidate_grad.mul_(self.cfg.optim.grad_clip / (grad_norm + 1e-6))
-                #     if self.cfg.optim.signed is not None:
-                #         if self.cfg.optim.signed == "soft":
-                #             scaling_factor = (
-                #                 1 - iteration / self.cfg.optim.max_iterations
-                #             )  # just a simple linear rule for now
-                #             candidate_grad.mul_(scaling_factor).tanh_().div_(scaling_factor)
-                #         elif self.cfg.optim.signed == "hard":
-                #             candidate_grad.sign_()
-                #         else:
-                #             pass
-                # candidate.backward(candidate_grad)
-                candidate_grad = torch.autograd.grad(total_objective, netG.parameters(), create_graph=False)
-                for p, g in zip(netG.parameters(), candidate_grad):
+                candidate_grad = torch.autograd.grad(total_objective, [p for p in netG.parameters() if p.requires_grad], create_graph=False)
+                with torch.no_grad():
+                    if self.cfg.optim.langevin_noise > 0:
+                        step_size = optimizer.param_groups[0]["lr"]
+                        noise_map = torch.randn_like(candidate_grad)
+                        candidate_grad += self.cfg.optim.langevin_noise * step_size * noise_map
+                    if self.cfg.optim.grad_clip is not None:
+                        grad_norm = candidate_grad.norm()
+                        if grad_norm > self.cfg.optim.grad_clip:
+                            candidate_grad.mul_(self.cfg.optim.grad_clip / (grad_norm + 1e-6))
+                    if self.cfg.optim.signed is not None:
+                        if self.cfg.optim.signed == "soft":
+                            scaling_factor = (
+                                1 - iteration / self.cfg.optim.max_iterations
+                            )  # just a simple linear rule for now
+                            candidate_grad.mul_(scaling_factor).tanh_().div_(scaling_factor)
+                        elif self.cfg.optim.signed == "hard":
+                            candidate_grad.sign_()
+                        else:
+                            pass
+                
+                for p, g in zip([p for p in netG.parameters() if p.requires_grad], candidate_grad):
                     p.grad = g
 
             self.current_task_loss = total_task_loss  # Side-effect this because of L-BFGS closure limitations :<

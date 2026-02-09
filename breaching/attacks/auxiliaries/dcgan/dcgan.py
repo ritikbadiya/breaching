@@ -14,7 +14,7 @@ def weights_init(m):
 # Generator Code
 
 class Generator(nn.Module):
-    def __init__(self, ngpu, nz, ngf, nc):
+    def __init__(self, nz, ngf, nc):
         '''
         Docstring for __init__
         
@@ -25,7 +25,6 @@ class Generator(nn.Module):
         :param nc: Number of channels in the training images. For color images this is 3
         '''
         super(Generator, self).__init__()
-        self.ngpu = ngpu
         self.main = nn.Sequential(
             # input is Z, going into a convolution
             nn.ConvTranspose2d(nz, ngf * 8, 4, 1, 0, bias=False),
@@ -51,7 +50,7 @@ class Generator(nn.Module):
         return self.main(input)
 
 class Discriminator(nn.Module):
-    def __init__(self, ngpu, nc, ndf):
+    def __init__(self, nc, ndf):
         '''
         Docstring for __init__
         
@@ -61,7 +60,6 @@ class Discriminator(nn.Module):
         :param ndf: Size of feature maps in discriminator
         '''
         super(Discriminator, self).__init__()
-        self.ngpu = ngpu
         self.main = nn.Sequential(
             # input is ``(nc) x 64 x 64``
             nn.Conv2d(nc, ndf, 4, 2, 1, bias=False),
