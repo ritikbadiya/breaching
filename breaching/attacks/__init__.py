@@ -15,6 +15,7 @@ from .gan_gradmatching_based_attack import GANGradMatchingAttacker
 from .girg_attack import ConditionalGANGradMatchingAttacker
 from .cgir_attack import ConditionalGenInstRecAttacker
 from .gismn_attack import GenerativeStyleMigrationAttacker
+from .gias_attack import GenImagePriorAttacker
 
 def prepare_attack(model, loss, cfg_attack, setup=dict(dtype=torch.float, device=torch.device("cpu"))):
     if cfg_attack.attack_type == "optimization":
@@ -51,6 +52,8 @@ def prepare_attack(model, loss, cfg_attack, setup=dict(dtype=torch.float, device
         attacker = ConditionalGenInstRecAttacker(model, loss, cfg_attack, setup)
     elif cfg_attack.attack_type == "gismn":
         attacker = GenerativeStyleMigrationAttacker(model, loss, cfg_attack, setup)
+    elif cfg_attack.attack_type == "gias":
+        attacker = GenImagePriorAttacker(model, loss, cfg_attack, setup)
     else:
         raise ValueError(f"Invalid type of attack {cfg_attack.attack_type} given.")
 

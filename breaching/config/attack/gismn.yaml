@@ -1,6 +1,7 @@
 defaults:
   - _default_optimization_attack
   - _self_
+type: generativegia
 attack_type: gismn
 
 objective:
@@ -17,7 +18,7 @@ optim:
   optimizer: adam
   signed:
   step_size: 0.1
-  boxed: True
+  boxed: False
   max_iterations: 4_000
   step_size_decay: step-lr
 
