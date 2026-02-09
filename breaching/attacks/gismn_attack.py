@@ -17,9 +17,43 @@ from .auxiliaries.BigGAN.model import BigGAN, Generator
 from .auxiliaries.BigGAN.config import BigGANConfig, BigGAN32, BigGAN128, BigGAN256, BigGAN512
 from .auxiliaries.BigGAN.utils import truncated_noise_sample, save_as_images, one_hot_from_names, one_hot_from_int
 
+from .auxiliaries.stylegan_xl import legacy, dnnlib
+from .auxiliaries.stylegan_xl.torch_utils import misc
+
 import logging
 
 log = logging.getLogger(__name__)
+
+def build_stylegan_xl_generator(
+    device,
+    network_pkl=None,
+    class_name='training.networks_stylegan2.Generator',
+    init_kwargs=None,
+    common_kwargs=None,
+):
+    """Construct a StyleGAN-XL generator and optionally load generator-only weights from a pickle."""
+    common_kwargs = common_kwargs or {}
+    if network_pkl is not None:
+        with dnnlib.util.open_url(network_pkl) as f:
+            data = legacy.load_network_pkl(f)
+        src_g = data['G_ema']
+        # Prefer the generator defined in the pickle to avoid class/kwargs mismatches.
+        if init_kwargs is None:
+            return src_g.to(device).eval()
+        # If caller insists on reconstruction, use the pickle's class_name unless overridden.
+        init_kwargs = dict(init_kwargs)
+        init_kwargs.setdefault('class_name', src_g.init_kwargs.get('class_name', class_name))
+        G = dnnlib.util.construct_class_by_name(**init_kwargs).to(device).eval()
+        misc.copy_params_and_buffers(src_g, G, require_all=False)
+        return G
+
+    if init_kwargs is None:
+        init_kwargs = dict(class_name=class_name, **common_kwargs)
+    else:
+        init_kwargs = dict(init_kwargs)
+        init_kwargs.setdefault('class_name', class_name)
+        init_kwargs.update(common_kwargs)
+    return dnnlib.util.construct_class_by_name(**init_kwargs).to(device).eval()
 
 class GenerativeStyleMigrationAttacker(OptimizationBasedAttacker):
     """Implements an optimization-based attack that only recovers the patch information 
@@ -43,11 +77,11 @@ class GenerativeStyleMigrationAttacker(OptimizationBasedAttacker):
         rec_models, labels, stats = self.prepare_attack(server_payload, shared_data)
         self.num_classes = server_payload[0]["metadata"]["classes"]
         log.info(f"Number of classes in the dataset is {self.num_classes}.")
-        if hasattr(server_payload[0]["metadata"], "name") and "CIFAR" in server_payload[0]["metadata"].name:
-            self.bigganconfig = BigGAN32
-        elif hasattr(server_payload[0]["metadata"], "name") and "ImageNet" in server_payload[0]["metadata"].name:
-            self.bigganconfig = BigGAN256
-        self.bigganconfig.num_classes = self.num_classes
+        # if hasattr(server_payload[0]["metadata"], "name") and "CIFAR" in server_payload[0]["metadata"].name:
+        #     self.bigganconfig = BigGAN32
+        # elif hasattr(server_payload[0]["metadata"], "name") and "ImageNet" in server_payload[0]["metadata"].name:
+        #     self.bigganconfig = BigGAN256
+        # self.bigganconfig.num_classes = self.num_classes
         # Main reconstruction loop starts here:
         scores = torch.zeros(self.cfg.restarts.num_trials)
         candidate_solutions = []
@@ -84,7 +118,8 @@ class GenerativeStyleMigrationAttacker(OptimizationBasedAttacker):
         # GISMN Does not require a pre-trained BigGAN. It uses pre-trained StyleGAN-XL models instead, 
         # but we are primarily using BigGAN for now. Will change to StyleGAN-XL later
         # so we can directly use the architecture and randomly initialized weights for the attack
-        self.netG = BigGAN(self.bigganconfig).to(self.setup["device"])
+        # self.netG = BigGAN(self.bigganconfig).to(self.setup["device"])
+        self.netG = build_stylegan_xl_generator(self.setup["device"], network_pkl=self.cfg.objective.network_pkl)
         #.from_pretrained('biggan-deep-128', cache_dir='./pretrained/models_128').to(self.setup["device"])
         self.netG.eval()
         # self.netG = BigGAN(self.bigganconfig).to(self.setup["device"])
@@ -93,9 +128,16 @@ class GenerativeStyleMigrationAttacker(OptimizationBasedAttacker):
         for p in self.netG.parameters():
             p.requires_grad = False
         # Define noise        
-        self.noise = truncated_noise_sample(batch_size=self.batch_size, 
-                                            dim_z=self.netG.config.z_dim, 
-                                            truncation=self.truncation)
+        try:
+            # For BigGAN model
+            self.noise = truncated_noise_sample(batch_size=self.batch_size, 
+                                                dim_z=self.netG.config.z_dim, 
+                                                truncation=self.truncation)
+        except AttributeError:
+            # For StyleGAN-XL model
+            self.noise = truncated_noise_sample(batch_size=self.batch_size, 
+                                                dim_z=self.netG.z_dim, 
+                                                truncation=self.truncation)
         self.noise = torch.tensor(self.noise, **self.setup).detach().clone().requires_grad_(True)
 
         minimal_value_so_far = torch.as_tensor(float("inf"), **self.setup)
@@ -120,7 +162,10 @@ class GenerativeStyleMigrationAttacker(OptimizationBasedAttacker):
                     # Project into image space
                     label = one_hot_from_int(labels, batch_size=self.batch_size, num_classes=self.num_classes)
                     label = torch.tensor(label, dtype=torch.float).to(self.setup["device"])
-                    candidate = self.netG(self.noise, label, truncation=self.truncation)
+                    try:
+                        candidate = self.netG(self.noise, label, truncation=self.truncation)
+                    except:
+                        candidate = self.netG(self.noise, label, truncation_psi=self.truncation, noise_mode='random')
                     if self.cfg.optim.boxed:
                         candidate.data = torch.max(torch.min(candidate, (1 - self.dm) / self.ds), -self.dm / self.ds)
                     if objective_value < minimal_value_so_far:
@@ -157,7 +202,12 @@ class GenerativeStyleMigrationAttacker(OptimizationBasedAttacker):
             optimizer.zero_grad()
             label = one_hot_from_int(labels, batch_size=self.batch_size, num_classes=self.num_classes)
             label = torch.tensor(label, dtype=torch.float).to(self.setup["device"])
-            candidate = netG(noise, label, truncation=self.truncation)
+            try:
+                # For BigGAN model
+                candidate = netG(noise, label, truncation=self.truncation)
+            except:
+                # For StyleGAN-XL model
+                candidate = netG(noise, label, truncation_psi=self.truncation, noise_mode='random')
 
             if self.cfg.differentiable_augmentations:
                 candidate_augmented = self.augmentations(candidate)

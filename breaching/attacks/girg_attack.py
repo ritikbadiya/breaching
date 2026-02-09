@@ -51,6 +51,7 @@ class ConditionalGANGradMatchingAttacker(OptimizationBasedAttacker):
         # GIRG Does not require a pre-trained BigGAN
         # so we can directly use the architecture and randomly initialized weights for the attack
         self.netG = BigGAN(self.bigganconfig).to(self.setup["device"])
+        self.netG.init_weights_normal(mean=0.0, std=1.0)  # Initialize the generator weights with normal distribution
         log.info("The number of parameters in the generator is {}".format(sum(p.numel() for p in self.netG.parameters())))
         # log.info(f"self.netG.embeddings.weight.shape = {self.netG.embeddings.weight.shape}")
         for p in self.netG.parameters():
