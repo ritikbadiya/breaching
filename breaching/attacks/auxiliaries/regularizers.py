@@ -4,6 +4,7 @@ import torch
 import torchvision
 from .deepinversion import DeepInversionFeatureHook
 import logging
+import kornia as K
 
 log = logging.getLogger(__name__)
 
@@ -592,6 +593,92 @@ class GroupRegularization(torch.nn.Module):
             f"scale={self.scale}, warmup={self.warmup_iters}"
         )
 
+class MeanRegularization(torch.nn.Module):
+    def __init__(self, setup, scale=0.1):
+        super().__init__()
+        self.setup = setup # for putting things on right device
+        self.scale = scale
+        self.register_buffer(
+            "means",
+            torch.tensor([0.491, 0.467, 0.421])
+        )
+    
+    def initialize(self, models, shared_data, labels, *args, **kwargs):
+        pass
+
+    def forward(self, x):
+        # x: (B, C, H, W)
+        assert x.shape[1] == 3, "MeanRegularization expects 3-channel images"
+
+        x_means = x.mean(dim=(0, 2, 3))  # (C,)
+        return self.scale*torch.mean((x_means - self.means)**2)
+    
+    def __repr__(self):
+        return f"Mean Regularization, scale={self.scale}"
+
+class CannyEdgeRegularization(torch.nn.Module):
+    def __init__(self, setup, beta=0.4, theta1=0.1, theta2=0.2, scale=0.1):
+        super().__init__()
+        self.setup = setup # for putting things on right device
+        self.scale = scale
+        self.beta = beta
+        self.theta1 = theta1
+        self.theta2 = theta2
+        self.register_buffer(
+            "grad_edge_center",
+            torch.zeros(2)
+        )
+
+    def initialize(self, models, shared_data, labels, *args, **kwargs):
+        user_data = shared_data[0]
+        G_fc = user_data["gradients"][-2]
+        G = G_fc.abs().mean(dim=0)
+        H = W = int(G.numel() ** 0.5)
+        g = G.flatten()
+        f_in = (g.max() - g.mean()) * self.beta
+        idx = torch.nonzero(g > f_in, as_tuple=False).squeeze(1)
+
+        if idx.numel() == 0:
+            # fallback: center of image
+            self.grad_edge_center = torch.tensor(
+                [H // 2, W // 2], device=G.device
+            )
+            return
+        
+        rows = idx // W
+        cols = idx % W
+
+        coords = torch.stack([rows, cols], dim=1)
+        self.grad_edge_center = coords.median(dim=0).values
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        if C == 3:
+            gray = K.color.rgb_to_grayscale(x)
+        else:
+            gray = x
+
+        edges, _ = K.filters.canny(
+            gray,
+            low_threshold=self.theta1,
+            high_threshold=self.theta2,
+        )
+
+        coords = torch.nonzero(edges[0, 0] > 0, as_tuple=False)
+
+        if coords.numel() == 0:
+            return x.new_tensor(0.0)
+
+        img_edge_center = coords[coords.shape[0] // 2].float()
+        Red = torch.norm(self.grad_edge_center - img_edge_center, p=2)
+
+        return self.scale*Red
+    
+    def __repr__(self):
+        return (
+            f"Canny Edge Regularization "
+            f"(beta={self.beta}, scale={self.scale})"
+        )
 
 regularizer_lookup = dict(
     total_variation=TotalVariation,
@@ -608,4 +695,6 @@ regularizer_lookup = dict(
     l2_regularization=L2Regularization,
     label_regularization=LabelRegularization,
     l1_regularization=L1Regularization,
+    mean_regularization=MeanRegularization, 
+    canny_edge_regularization=CannyEdgeRegularization
 )
