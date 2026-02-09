@@ -14,12 +14,21 @@ def weights_init(m):
 # Generator Code
 
 class Generator(nn.Module):
-    def __init__(self, ngpu):
+    def __init__(self, ngpu, nz, ngf, nc):
+        '''
+        Docstring for __init__
+        
+        :param self: Description
+        :param ngpu: Number of GPUs available. Use 0 for CPU mode.
+        :param nz: Size of z latent vector (i.e. size of generator input)
+        :param ngf: Size of feature maps in generator
+        :param nc: Number of channels in the training images. For color images this is 3
+        '''
         super(Generator, self).__init__()
         self.ngpu = ngpu
         self.main = nn.Sequential(
             # input is Z, going into a convolution
-            nn.ConvTranspose2d( nz, ngf * 8, 4, 1, 0, bias=False),
+            nn.ConvTranspose2d(nz, ngf * 8, 4, 1, 0, bias=False),
             nn.BatchNorm2d(ngf * 8),
             nn.ReLU(True),
             # state size. ``(ngf*8) x 4 x 4``
@@ -44,7 +53,15 @@ class Generator(nn.Module):
         return self.main(input)
 
 class Discriminator(nn.Module):
-    def __init__(self, ngpu):
+    def __init__(self, ngpu, nc, ndf):
+        '''
+        Docstring for __init__
+        
+        :param self: Description
+        :param ngpu: Number of GPUs available. Use 0 for CPU mode.
+        :param nc: Number of channels in the training images. For color images this is 3
+        :param ndf: Size of feature maps in discriminator
+        '''
         super(Discriminator, self).__init__()
         self.ngpu = ngpu
         self.main = nn.Sequential(
@@ -73,7 +90,14 @@ class Discriminator(nn.Module):
 
 if __name__ == '__main__':
     # Create the generator
-    netG = Generator(ngpu).to(device)
+    nz = 100
+    ngf = 64
+    ndf = 64
+    nc = 3
+    ngpu = 1
+    device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
+    device = torch.device("mps" if torch.backends.mps.is_available() else device)
+    netG = Generator(ngpu, nz, ngf, nc).to(device)
     # Handle multi-GPU if desired
     if (device.type == 'cuda') and (ngpu > 1):
         netG = nn.DataParallel(netG, list(range(ngpu)))

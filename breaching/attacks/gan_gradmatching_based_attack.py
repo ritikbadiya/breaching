@@ -1,4 +1,4 @@
-""" Implements the Optimization based April attacks on ViT models.
+""" Implements the CI-Net attacks on ViT models.
 This method uses L2 loss optimization for the parameter gradients,
 And the positional embedding gradients are also recovered using cosine similarity loss
 """

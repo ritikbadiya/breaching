@@ -1,11 +1,12 @@
 defaults:
   - _default_optimization_attack
   - _self_
-attack_type: gias
+attack_type: gismn
 
 objective:
-  type: cosine-similarity
+  type: euclidean-grad-cossim-posembed
   scale: 1.0 # need to have a much smaller scale like 0.0001 for euclidean objectives
+  posembed_scale: 0.1
 
 restarts:
   num_trials: 1
@@ -13,17 +14,21 @@ restarts:
 
 optim:
   optimizer: adam
-  signed: "hard"
+  signed:
   step_size: 0.1
   boxed: True
-  max_iterations: 24_000
+  max_iterations: 4_000
   step_size_decay: step-lr
 
   callback: 1000 # Print objective value every callback many iterations
 
 regularization:
   total_variation:
-    scale: 0.2
+    scale: 1e-4
     # 0.2 # The old version did not take the mean dx + dy as the new version, so this corresponds to 0.1 in the old repo
     inner_exp: 1
     outer_exp: 1
+  l2_regularization:
+    scale: 1e-4
+  # group_regularization:
+  #   scale: 1e-4
