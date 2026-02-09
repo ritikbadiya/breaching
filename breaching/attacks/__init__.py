@@ -14,7 +14,7 @@ from .boosting_gla import BoostingGLA
 from .gan_gradmatching_based_attack import GANGradMatchingAttacker
 from .girg_attack import ConditionalGANGradMatchingAttacker
 from .cgir_attack import ConditionalGenInstRecAttacker
-from .gismn_atttack import GenerativeStyleMigrationAttacker
+from .gismn_attack import GenerativeStyleMigrationAttacker
 
 def prepare_attack(model, loss, cfg_attack, setup=dict(dtype=torch.float, device=torch.device("cpu"))):
     if cfg_attack.attack_type == "optimization":
