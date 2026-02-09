@@ -1,7 +1,8 @@
 defaults:
   - _default_optimization_attack
   - _self_
-attack_type: gias
+type: generativegia
+attack_type: gifd
 
 objective:
   type: cosine-similarity

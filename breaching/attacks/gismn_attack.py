@@ -37,6 +37,7 @@ def build_stylegan_xl_generator(
         with dnnlib.util.open_url(network_pkl) as f:
             data = legacy.load_network_pkl(f)
         src_g = data['G_ema']
+        log.info(f"StyleGAN-XL init_kwargs: {src_g.init_kwargs}")
         # Prefer the generator defined in the pickle to avoid class/kwargs mismatches.
         if init_kwargs is None:
             return src_g.to(device).eval()
@@ -148,6 +149,7 @@ class GenerativeStyleMigrationAttacker(OptimizationBasedAttacker):
         current_wallclock = time.time()
         try:
             for iteration in range(self.cfg.optim.max_iterations):
+                self.curr_iteration = iteration
                 closure = self._compute_objective(self.netG,
                                                   self.noise, 
                                                     labels, 
@@ -222,8 +224,11 @@ class GenerativeStyleMigrationAttacker(OptimizationBasedAttacker):
                 objective, task_loss = self.objective(model, data["gradients"], candidate_augmented, labels)
                 total_objective += objective
                 total_task_loss += task_loss
-            for regularizer in self.regularizers:
-                total_objective += regularizer(candidate_augmented)
+            
+            if self.curr_iteration >= self.cfg.optim.max_iterations * 4 // 9:
+                # Add regularization only in the later stages of optimization, to allow more freedom in the initial stages
+                for regularizer in self.regularizers:
+                    total_objective += regularizer(candidate_augmented)
 
             if total_objective.requires_grad:
                 candidate_grad = torch.autograd.grad(total_objective, noise, create_graph=False)[0]
