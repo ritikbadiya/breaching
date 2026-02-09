@@ -2,7 +2,7 @@
 This method uses L2 loss optimization for the parameter gradients,
 And the positional embedding gradients are also recovered using cosine similarity loss
 """
-
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -193,7 +193,10 @@ class GenImagePriorAttacker(OptimizationBasedAttacker):
         for p in self.netG.parameters():
             p.requires_grad = False
 
-        self.noise = torch.tensor(self.noise, **self.setup).detach().clone().requires_grad_(True)
+        if isinstance(self.noise, np.ndarray):
+            self.noise = torch.tensor(self.noise, **self.setup).detach().clone().requires_grad_(True)
+        else:
+            self.noise = self.noise.detach().clone().requires_grad_(True)
         
         minimal_value_so_far = torch.as_tensor(float("inf"), **self.setup)
         # Initialize optimizers
