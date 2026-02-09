@@ -72,7 +72,10 @@ class BigGANConfig(object):
 
 
 BigGAN32 = BigGANConfig(output_dim=32, z_dim=128, class_embed_dim=128, channel_width=128, num_classes=10,
-                         layers=[(False, 8, 8),
+                         layers=[
+                                 (False, 8, 8),
+                                 (False, 8, 8),
+                                 (False, 8, 8),
                                  (True, 8, 4),
                                  (False, 4, 4),
                                  (True, 4, 2),

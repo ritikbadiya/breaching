@@ -302,6 +302,19 @@ class BigGAN(nn.Module):
         self.embeddings = nn.Linear(config.num_classes, config.z_dim, bias=False)
         self.generator = Generator(config)
 
+    def init_weights_normal(self, mean=0.0, std=0.02, bias=0.0):
+        """Initialize weights with a normal distribution and biases with a constant."""
+        with torch.no_grad():
+            for module in self.modules():
+                if hasattr(module, "weight_orig"):
+                    nn.init.normal_(module.weight_orig, mean=mean, std=std)
+                    if hasattr(module, "bias") and isinstance(module.bias, torch.nn.Parameter):
+                        nn.init.constant_(module.bias, bias)
+                elif hasattr(module, "weight") and isinstance(module.weight, torch.nn.Parameter):
+                    nn.init.normal_(module.weight, mean=mean, std=std)
+                    if hasattr(module, "bias") and isinstance(module.bias, torch.nn.Parameter):
+                        nn.init.constant_(module.bias, bias)
+
     def forward(self, z, class_label, truncation):
         assert 0 < truncation <= 1
 
