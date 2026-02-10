@@ -1,0 +1,58 @@
+defaults:
+  - _default_optimization_attack
+  - _self_
+type: afgi
+label_strategy: yin
+
+objective:
+  type: cosine-similarity
+  scale: 1e-1 # need to have a much smaller scale like 0.0001 for euclidean objectives
+  max_iters: 20_000
+
+restarts:
+  num_trials: 1
+  scoring: "cosine-similarity"
+
+optim:
+  optimizer: adam
+  signed:
+  step_size: 0.1
+  boxed: False
+  max_iterations: 20_000
+  step_size_decay: cosine-decay
+
+  callback: 1000 # Print objective value every callback many iterations
+
+regularization:
+  # image_prior:
+  #   scale: 0.2
+  #   max_iters: 20_000
+  #   first_bn_multiplier: 1.0
+  # patch_prior:
+  #   scale: 1e-1
+  #   patch_size: 14
+  total_variation:
+    scale: 1.0
+    #0.2 # The old version did not take the mean dx + dy as the new version, so this corresponds to 0.1 in the old repo
+    inner_exp: 1
+    outer_exp: 1
+  # total_variation:
+  #   scale: 0.1
+  #   inner_exp: 2
+  #   outer_exp: 0.5
+  #   double_opponents: True
+  # norm:
+  #   scale: 0.1
+  #   pnorm: 2
+  # group_regularization: # Not implemented.
+  #   scale: 0.01
+  #   warmup_iters: 2000
+  mean_regularization:
+    scale: 0.1
+  canny_edge_regularization:
+    scale: 1e-3
+    beta: 0.5 
+    theta1: 0.1
+    theta2: 0.2
+
+
