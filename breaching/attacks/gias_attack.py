@@ -19,6 +19,8 @@ from .auxiliaries.BigGAN.utils import truncated_noise_sample, save_as_images, on
 
 from .auxiliaries.stylegan_xl import legacy, dnnlib
 from .auxiliaries.stylegan_xl.torch_utils import misc
+from .auxiliaries.stylegan2_ada import legacy as stylegan2_ada_legacy, dnnlib as stylegan2_ada_dnnlib
+from .auxiliaries.stylegan2_ada.torch_utils import misc as stylegan2_ada_misc
 
 from .auxiliaries.dcgan.dcgan import Generator as DCGANGenerator
 
@@ -90,6 +92,35 @@ def build_stylegan_xl_generator(
         init_kwargs.update(common_kwargs)
     return dnnlib.util.construct_class_by_name(**init_kwargs).to(device).eval()
 
+def build_stylegan2_ada_generator(
+    device,
+    network_pkl=None,
+    class_name='training.networks.Generator',
+    init_kwargs=None,
+    common_kwargs=None,
+):
+    """Construct a StyleGAN2-ADA generator and optionally load generator-only weights from a pickle."""
+    common_kwargs = common_kwargs or {}
+    if network_pkl is not None:
+        with stylegan2_ada_dnnlib.util.open_url(network_pkl) as f:
+            data = stylegan2_ada_legacy.load_network_pkl(f)
+        src_g = data['G_ema']
+        if init_kwargs is None:
+            return src_g.to(device).eval()
+        init_kwargs = dict(init_kwargs)
+        init_kwargs.setdefault('class_name', src_g.init_kwargs.get('class_name', class_name))
+        G = stylegan2_ada_dnnlib.util.construct_class_by_name(**init_kwargs).to(device).eval()
+        stylegan2_ada_misc.copy_params_and_buffers(src_g, G, require_all=False)
+        return G
+
+    if init_kwargs is None:
+        init_kwargs = dict(class_name=class_name, **common_kwargs)
+    else:
+        init_kwargs = dict(init_kwargs)
+        init_kwargs.setdefault('class_name', class_name)
+        init_kwargs.update(common_kwargs)
+    return stylegan2_ada_dnnlib.util.construct_class_by_name(**init_kwargs).to(device).eval()
+
 class GenImagePriorAttacker(OptimizationBasedAttacker):
     """Implements an optimization-based attack that only recovers the patch information 
     by opyimization L2 loss on the the parameter gradients.
@@ -116,6 +147,12 @@ class GenImagePriorAttacker(OptimizationBasedAttacker):
         if x.shape[-2:] != (target_h, target_w):
             return F.interpolate(x, size=(target_h, target_w), mode="bilinear", align_corners=False)
         return x
+
+    def _make_cond_label(self, labels, device, c_dim):
+        if c_dim == 0:
+            return torch.zeros([self.batch_size, 0], device=device)
+        label = one_hot_from_int(labels, batch_size=self.batch_size, num_classes=self.num_classes)
+        return torch.tensor(label, dtype=torch.float, device=device)
 
     def reconstruct(self, server_payload, shared_data, server_secrets=None, initial_data=None, dryrun=False):
         # Initialize stats module for later usage:
@@ -175,6 +212,12 @@ class GenImagePriorAttacker(OptimizationBasedAttacker):
             self.noise = truncated_noise_sample(batch_size=self.batch_size, 
                                             dim_z=self.netG.z_dim, 
                                             truncation=self.truncation)
+        elif self.cfg.generator.type in ("stylegan2", "stylegan2_ada"):
+            self.netG = build_stylegan2_ada_generator(self.setup["device"], network_pkl=self.cfg.generator.network_wts)
+            # Define noise
+            self.noise = truncated_noise_sample(batch_size=self.batch_size,
+                                            dim_z=self.netG.z_dim,
+                                            truncation=self.truncation)
         elif self.cfg.generator.type == "dcgan":
             self.netG = DCGANGenerator(nz=self.cfg.generator.z_dim, ngf=self.cfg.generator.ngf, nc=self.cfg.generator.nc).to(self.setup["device"])
             state = torch.load(self.cfg.generator.network_wts, map_location=self.setup["device"])
@@ -219,13 +262,14 @@ class GenImagePriorAttacker(OptimizationBasedAttacker):
                 with torch.no_grad():
                     # Project into image space
                     with torch.no_grad():
-                        label = one_hot_from_int(labels, batch_size=self.batch_size, num_classes=self.num_classes)
-                        label = torch.tensor(label, dtype=torch.float).to(self.setup["device"])
                         if self.cfg.generator.type == "biggan":
-                            # For BigGAN model
+                            label = self._make_cond_label(labels, self.setup["device"], self.num_classes)
                             candidate = self.netG(self.noise, label, truncation=self.truncation)
                         elif self.cfg.generator.type == "stylegan_xl":
-                            # For StyleGAN-XL model
+                            label = self._make_cond_label(labels, self.setup["device"], self.netG.c_dim)
+                            candidate = self.netG(self.noise, label, truncation_psi=self.truncation, noise_mode='random')
+                        elif self.cfg.generator.type in ("stylegan2", "stylegan2_ada"):
+                            label = self._make_cond_label(labels, self.setup["device"], self.netG.c_dim)
                             candidate = self.netG(self.noise, label, truncation_psi=self.truncation, noise_mode='random')
                         elif self.cfg.generator.type == "dcgan":
                             candidate = self.netG(self.noise)
@@ -268,17 +312,18 @@ class GenImagePriorAttacker(OptimizationBasedAttacker):
         self.noise = self.noise.requires_grad_(False)
 
         with torch.no_grad():
-            label = one_hot_from_int(labels, batch_size=self.batch_size, num_classes=self.num_classes)
-            label = torch.tensor(label, dtype=torch.float).to(self.setup["device"])
             if self.cfg.generator.type == "biggan":
-                # For BigGAN model
+                label = self._make_cond_label(labels, self.setup["device"], self.num_classes)
                 candidate = self.netG(self.noise, label, truncation=self.truncation)
             elif self.cfg.generator.type == "stylegan_xl":
-                # For StyleGAN-XL model
+                label = self._make_cond_label(labels, self.setup["device"], self.netG.c_dim)
+                candidate = self.netG(self.noise, label, truncation_psi=self.truncation, noise_mode='random')
+            elif self.cfg.generator.type in ("stylegan2", "stylegan2_ada"):
+                label = self._make_cond_label(labels, self.setup["device"], self.netG.c_dim)
                 candidate = self.netG(self.noise, label, truncation_psi=self.truncation, noise_mode='random')
             elif self.cfg.generator.type == "dcgan":
                 candidate = self.netG(self.noise)
-        candidate = self._resize_dcgan_output(candidate)
+            candidate = self._resize_dcgan_output(candidate)
         
         best_candidate = candidate.detach().clone()
         minimal_value_so_far = torch.as_tensor(float("inf"), **self.setup)
@@ -301,14 +346,14 @@ class GenImagePriorAttacker(OptimizationBasedAttacker):
                 scheduler.step()
 
                 with torch.no_grad():
-                    # Project into image space
-                    label = one_hot_from_int(labels, batch_size=self.batch_size, num_classes=self.num_classes)
-                    label = torch.tensor(label, dtype=torch.float).to(self.setup["device"])
                     if self.cfg.generator.type == "biggan":
-                        # For BigGAN model
+                        label = self._make_cond_label(labels, self.setup["device"], self.num_classes)
                         candidate = self.netG(self.noise, label, truncation=self.truncation)
                     elif self.cfg.generator.type == "stylegan_xl":
-                        # For StyleGAN-XL model
+                        label = self._make_cond_label(labels, self.setup["device"], self.netG.c_dim)
+                        candidate = self.netG(self.noise, label, truncation_psi=self.truncation, noise_mode='random')
+                    elif self.cfg.generator.type in ("stylegan2", "stylegan2_ada"):
+                        label = self._make_cond_label(labels, self.setup["device"], self.netG.c_dim)
                         candidate = self.netG(self.noise, label, truncation_psi=self.truncation, noise_mode='random')
                     elif self.cfg.generator.type == "dcgan":
                         candidate = self.netG(self.noise)
@@ -349,13 +394,14 @@ class GenImagePriorAttacker(OptimizationBasedAttacker):
         def closure():
             optimizer.zero_grad()
             # GENERATION
-            label = one_hot_from_int(labels, batch_size=self.batch_size, num_classes=self.num_classes)
-            label = torch.tensor(label, dtype=torch.float).to(self.setup["device"])
             if self.cfg.generator.type == "biggan":
-                # For BigGAN model
+                label = self._make_cond_label(labels, self.setup["device"], self.num_classes)
                 candidate = netG(noise, label, truncation=self.truncation)
             elif self.cfg.generator.type == "stylegan_xl":
-                # For StyleGAN-XL model
+                label = self._make_cond_label(labels, self.setup["device"], netG.c_dim)
+                candidate = netG(noise, label, truncation_psi=self.truncation, noise_mode='random')
+            elif self.cfg.generator.type in ("stylegan2", "stylegan2_ada"):
+                label = self._make_cond_label(labels, self.setup["device"], netG.c_dim)
                 candidate = netG(noise, label, truncation_psi=self.truncation, noise_mode='random')
             elif self.cfg.generator.type == "dcgan":
                 candidate = netG(noise)
@@ -411,13 +457,14 @@ class GenImagePriorAttacker(OptimizationBasedAttacker):
     def _compute_objective_latent(self, netG, noise, labels, rec_model, optimizer, shared_data, iteration):
         def closure():
             optimizer.zero_grad()
-            label = one_hot_from_int(labels, batch_size=self.batch_size, num_classes=self.num_classes)
-            label = torch.tensor(label, dtype=torch.float).to(self.setup["device"])
             if self.cfg.generator.type == "biggan":
-                # For BigGAN model
+                label = self._make_cond_label(labels, self.setup["device"], self.num_classes)
                 candidate = netG(noise, label, truncation=self.truncation)
             elif self.cfg.generator.type == "stylegan_xl":
-                # For StyleGAN-XL model
+                label = self._make_cond_label(labels, self.setup["device"], netG.c_dim)
+                candidate = netG(noise, label, truncation_psi=self.truncation, noise_mode='random')
+            elif self.cfg.generator.type in ("stylegan2", "stylegan2_ada"):
+                label = self._make_cond_label(labels, self.setup["device"], netG.c_dim)
                 candidate = netG(noise, label, truncation_psi=self.truncation, noise_mode='random')
             elif self.cfg.generator.type == "dcgan":
                 candidate = netG(noise)
