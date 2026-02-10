@@ -35,5 +35,5 @@ regularization:
     outer_exp: 1
   l2_regularization: # For parameter scaling
     scale: 0.01
-  # l2_regularization: # For P1
-  #   scale: 0.01
+  l2_regularization_target: # For P1
+    scale: 0.01

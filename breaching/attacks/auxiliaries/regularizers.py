@@ -693,6 +693,7 @@ regularizer_lookup = dict(
     mi_regularization=MIRegularization,
     group_regularization=GroupRegularization,
     l2_regularization=L2Regularization,
+    l2_regularization_target=L2Regularization,
     label_regularization=LabelRegularization,
     l1_regularization=L1Regularization,
     mean_regularization=MeanRegularization, 
