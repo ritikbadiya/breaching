@@ -15,7 +15,10 @@ import shutil
 import uuid
 
 import torch
-import torch.utils.cpp_extension
+try:
+    import torch.utils.cpp_extension as torch_cpp_extension
+except Exception:
+    torch_cpp_extension = None
 from torch.utils.file_baton import FileBaton
 
 #----------------------------------------------------------------------------
@@ -116,7 +119,13 @@ def get_plugin(module_name, sources, headers=None, source_dir=None, **build_kwar
 
             # Select cached build directory name.
             source_digest = hash_md5.hexdigest()
-            build_top_dir = torch.utils.cpp_extension._get_build_directory(module_name, verbose=verbose_build) # pylint: disable=protected-access
+            if torch_cpp_extension is None:
+                raise RuntimeError(
+                    'PyTorch C++ extensions are unavailable. '
+                    'Install a full Python build with distutils/setuptools, '
+                    'or set STYLEGANXL_DISABLE_CUSTOM_OPS=1 to use slow reference ops.'
+                )
+            build_top_dir = torch_cpp_extension._get_build_directory(module_name, verbose=verbose_build) # pylint: disable=protected-access
             cached_build_dir = os.path.join(build_top_dir, f'{source_digest}-{_get_mangled_gpu_name()}')
 
             if not os.path.isdir(cached_build_dir):
@@ -133,10 +142,16 @@ def get_plugin(module_name, sources, headers=None, source_dir=None, **build_kwar
 
             # Compile.
             cached_sources = [os.path.join(cached_build_dir, os.path.basename(fname)) for fname in sources]
-            torch.utils.cpp_extension.load(name=module_name, build_directory=cached_build_dir,
+            torch_cpp_extension.load(name=module_name, build_directory=cached_build_dir,
                 verbose=verbose_build, sources=cached_sources, **build_kwargs)
         else:
-            torch.utils.cpp_extension.load(name=module_name, verbose=verbose_build, sources=sources, **build_kwargs)
+            if torch_cpp_extension is None:
+                raise RuntimeError(
+                    'PyTorch C++ extensions are unavailable. '
+                    'Install a full Python build with distutils/setuptools, '
+                    'or set STYLEGANXL_DISABLE_CUSTOM_OPS=1 to use slow reference ops.'
+                )
+            torch_cpp_extension.load(name=module_name, verbose=verbose_build, sources=sources, **build_kwargs)
 
         # Load.
         module = importlib.import_module(module_name)

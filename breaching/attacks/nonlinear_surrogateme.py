@@ -10,6 +10,7 @@ and convers subsequent developments such as
 
 import torch
 import time
+import copy
 
 from .optimization_based_attack import OptimizationBasedAttacker
 from .auxiliaries.regularizers import regularizer_lookup, TotalVariation
@@ -27,19 +28,20 @@ class NonLinearSurrogateModelExtension(OptimizationBasedAttacker):
     def __init__(self, model, loss_fn, cfg_attack, setup=dict(dtype=torch.float, device=torch.device("cpu"))):
         super().__init__(model, loss_fn, cfg_attack, setup)
         self.t = torch.tensor(0.5, requires_grad=True, **setup)
+        self.setup = setup
 
     def _run_trial(self, rec_model, shared_data, labels, stats, trial, initial_data=None, dryrun=False):
         """Run a single reconstruction trial."""
-        self.w0 = copy.deepcopy(rec_model).to(**setup).eval()
-        self.wT = copy.deepcopy(rec_model).to(**setup).eval()
+        self.w0 = copy.deepcopy(rec_model).to(**self.setup).eval()
+        self.wT = copy.deepcopy(rec_model).to(**self.setup).eval()
         for p0, pT, g in zip(self.w0.parameters(), self.w0.parameters(), shared_data[0]["gradients"]):
             pT.data = p0.data + g
-        self.P1 = copy.deepcopy(self.w0).to(**setup)
+        self.P1 = copy.deepcopy(self.w0).to(**self.setup)
         for p0, pT, p1 in zip(self.w0.parameters(), self.wT.parameters(), self.P1.parameters()):
             p1.data = 0.5*(p0.data + pT.data)
             p1.requires_grad = True
-        self.P0 = copy.deepcopy(self.P1).to(**setup).eval()
-        self.d = copy.deepcopy(self.w0).to(**setup)
+        self.P0 = copy.deepcopy(self.P1).to(**self.setup).eval()
+        self.d = copy.deepcopy(self.w0).to(**self.setup)
         for p in self.d.parameters():
             p.data.fill_(1.0)
             p.requires_grad = True
