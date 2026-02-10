@@ -29,7 +29,18 @@ import urllib
 import urllib.request
 import uuid
 
-from distutils.util import strtobool
+try:
+    from distutils.util import strtobool
+except Exception:
+    # Some environments ship Python without distutils (or without distutils.util).
+    def strtobool(val):
+        val = str(val).strip().lower()
+        if val in ('y', 'yes', 't', 'true', 'on', '1'):
+            return 1
+        if val in ('n', 'no', 'f', 'false', 'off', '0'):
+            return 0
+        raise ValueError(f'invalid truth value {val!r}')
+
 from typing import Any, List, Tuple, Union
 
 
