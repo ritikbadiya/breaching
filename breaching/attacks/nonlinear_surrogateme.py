@@ -21,6 +21,32 @@ import logging
 
 log = logging.getLogger(__name__)
 
+import inspect
+
+def get_var_name(obj):
+    """
+    Retrieves the variable name of the object passed by inspecting 
+    the caller's stack frame.
+    """
+    # Get the frame of the person who called this function
+    caller_frame = inspect.currentframe().f_back
+    
+    try:
+        # Check local variables in the caller's scope first
+        for name, value in caller_frame.f_locals.items():
+            if value is obj:
+                return name
+        
+        # Fallback to global variables in the caller's scope
+        for name, value in caller_frame.f_globals.items():
+            if value is obj:
+                return name
+    finally:
+        # Avoid reference cycles by deleting the frame reference
+        del caller_frame
+        
+    return None
+
 
 class NonLinearSurrogateModelExtension(OptimizationBasedAttacker):
     """Implements a wide spectrum of optimization-based attacks."""
@@ -29,26 +55,60 @@ class NonLinearSurrogateModelExtension(OptimizationBasedAttacker):
         super().__init__(model, loss_fn, cfg_attack, setup)
         self.t = torch.tensor(0.5, requires_grad=True, **setup)
         self.setup = setup
+        self.regularizers = []
+        try:
+            for key in self.cfg.regularization.keys():
+                if self.cfg.regularization[key].scale > 0:
+                    self.regularizers += [regularizer_lookup[key](self.setup, **self.cfg.regularization[key])]
+                    # setattr(object, name, value)
+                    if 'l2_regularization' in key:
+                        self.regularizers[-1].__setattr__("yaml_key", key)
+                        # log.info(f"{', '.join('{}: {}'.format(item[0], item[1]) for item in vars(self.regularizers[-1]).items())}")  # Log all attributes of the regularizer for debugging
+
+        except AttributeError:
+            pass  # No regularizers selected.
 
     def _run_trial(self, rec_model, shared_data, labels, stats, trial, initial_data=None, dryrun=False):
         """Run a single reconstruction trial."""
-        self.w0 = copy.deepcopy(rec_model).to(**self.setup).eval()
-        self.wT = copy.deepcopy(rec_model).to(**self.setup).eval()
-        for p0, pT, g in zip(self.w0.parameters(), self.w0.parameters(), shared_data[0]["gradients"]):
-            pT.data = p0.data + g
-        self.P1 = copy.deepcopy(self.w0).to(**self.setup)
-        for p0, pT, p1 in zip(self.w0.parameters(), self.wT.parameters(), self.P1.parameters()):
-            p1.data = 0.5*(p0.data + pT.data)
-            p1.requires_grad = True
-        self.P0 = copy.deepcopy(self.P1).to(**self.setup).eval()
-        self.d = copy.deepcopy(self.w0).to(**self.setup)
-        for p in self.d.parameters():
-            p.data.fill_(1.0)
-            p.requires_grad = True
+        if isinstance(rec_model, (list, tuple)):
+            rec_models = list(rec_model)
+        else:
+            rec_models = [rec_model]
+        if len(rec_models) == 0:
+            raise ValueError("rec_model must contain at least one model.")
+
+        self.w0 = []
+        self.wT = []
+        self.P1 = []
+        self.P0 = []
+        self.d = []
+
+        for model, data in zip(rec_models, shared_data):
+            w0 = copy.deepcopy(model).to(**self.setup).eval()
+            wT = copy.deepcopy(model).to(**self.setup).eval()
+            for p0, pT, g in zip(w0.parameters(), wT.parameters(), data["gradients"]):
+                pT.data = p0.data + g
+
+            P1 = copy.deepcopy(w0).to(**self.setup)
+            for p0, pT, p1 in zip(w0.parameters(), wT.parameters(), P1.parameters()):
+                p1.data = 0.5 * (p0.data + pT.data)
+                p1.requires_grad = True
+
+            P0 = copy.deepcopy(P1).to(**self.setup).eval()
+            d_model = copy.deepcopy(w0).to(**self.setup)
+            for p in d_model.parameters():
+                p.data.fill_(1.0)
+                p.requires_grad = True
+
+            self.w0.append(w0)
+            self.wT.append(wT)
+            self.P1.append(P1)
+            self.P0.append(P0)
+            self.d.append(d_model)
 
         # Initialize losses:
         for regularizer in self.regularizers:
-            regularizer.initialize(rec_model, shared_data, labels)
+            regularizer.initialize(rec_models, shared_data, labels)
         self.objective.initialize(self.loss_fn, self.cfg.impl, shared_data[0]["metadata"]["local_hyperparams"])
 
         # Initialize candidate reconstruction data
@@ -67,12 +127,15 @@ class NonLinearSurrogateModelExtension(OptimizationBasedAttacker):
         current_wallclock = time.time()
         try:
             for iteration in range(self.cfg.optim.max_iterations):
-                for p, p1, w0, wT in zip(rec_model.parameters(), self.P1.parameters(), self.w0.parameters(), self.wT.parameters()):
-                    if self.cfg.optim.use_quad_bezier:
-                        p.data = self._update_bezier_quadratic_(self.t, p1, w0, wT)
-                    else:
-                        p.data = self._update_bezier_linear(self.t, p1, w0, wT)
-                closure = self._compute_objective(candidate, labels, rec_model, optimizer, shared_data, iteration)
+                for model, P1, w0, wT in zip(rec_models, self.P1, self.w0, self.wT):
+                    for p, p1, w0p, wTp in zip(
+                        model.parameters(), P1.parameters(), w0.parameters(), wT.parameters()
+                    ):
+                        if self.cfg.optim.use_quad_bezier:
+                            p.data = self._update_bezier_quadratic_(self.t, p1, w0p, wTp)
+                        else:
+                            p.data = self._update_bezier_linear(self.t, p1, w0p, wTp)
+                closure = self._compute_objective(candidate, labels, rec_models, optimizer, shared_data, iteration)
                 objective_value, task_loss = optimizer.step(closure), self.current_task_loss
                 scheduler.step()
                 t_optimizer.step()
@@ -84,7 +147,9 @@ class NonLinearSurrogateModelExtension(OptimizationBasedAttacker):
                     if self.cfg.optim.boxed:
                         candidate.data = torch.max(torch.min(candidate, (1 - self.dm) / self.ds), -self.dm / self.ds)
                         self.t.data = torch.clip(self.t.data, 0, 1)
-                        self.d.data = torch.clip(self.d.data, 0.1, 10.0)
+                        for d_model in self.d:
+                            for p in d_model.parameters():
+                                p.data = torch.clip(p.data, 0.1, 10.0)
                         
                     if objective_value < minimal_value_so_far:
                         minimal_value_so_far = objective_value.detach()
@@ -130,10 +195,19 @@ class NonLinearSurrogateModelExtension(OptimizationBasedAttacker):
                 total_task_loss += task_loss
             # log.info(f"Objective Loss: {objective.item():2.4f}")
             # log.info(f"Number of regularizers: {len(self.regularizers)}")
-            total_objective += self.regularizers[0](tensor=[p for p in self.P1.parameters()], 
-                                                    target=[p for p in self.P0.parameters()])
-            total_objective += self.regularizers[1](tensor=[p for p in self.d.parameters()], 
-                                                    target=torch.tensor(1.0, **self.setup))
+            for regularizer in self.regularizers:
+                if regularizer.__class__.__name__ == "L2Regularization":
+                    if regularizer.__dict__.get('yaml_key', None) == "l2_regularization":
+                        total_objective += regularizer(tensor=[p for model in self.P1 for p in model.parameters()],
+                                                    target=[p for model in self.P0 for p in model.parameters()])
+                        # log.info(f"Applying L2 Regularization with name {regularizer.__dict__.get('yaml_key', 'unknown')} and scale {regularizer.scale}")
+                    elif regularizer.__dict__.get('yaml_key', None) == "l2_regularization_target":
+                        total_objective += regularizer(tensor=[p for model in self.d for p in model.parameters()],
+                                                        target=torch.tensor(1.0, **self.setup))
+                        # log.info(f"Applying L2 Regularization with name {regularizer.__dict__.get('yaml_key', 'unknown')} and scale {regularizer.scale}")
+                else:
+                    temp_loss = regularizer(candidate_augmented)
+                    total_objective += temp_loss
 
             if total_objective.requires_grad:
                 total_objective.backward(inputs=candidate, create_graph=False)
@@ -195,10 +269,12 @@ class NonLinearSurrogateModelExtension(OptimizationBasedAttacker):
         return torch.optim.Adam([self.t], lr=self.cfg.optim.eta_t)
 
     def _init_d_optimizer(self):
-        return torch.optim.Adam(self.d.parameters(), lr=self.cfg.optim.eta_d)
+        params = [p for model in self.d for p in model.parameters()]
+        return torch.optim.Adam(params, lr=self.cfg.optim.eta_d)
 
     def _init_p1_optimizer(self):
-        return torch.optim.Adam(self.P1.parameters(), lr=self.cfg.optim.eta_P)
+        params = [p for model in self.P1 for p in model.parameters()]
+        return torch.optim.Adam(params, lr=self.cfg.optim.eta_P)
 
     def _update_bezier_quadratic_(self, t, P1, w0, wT):
         return (1-t)**2 * w0 + 2 * (1-t) * t * P1 + t**2 * wT
