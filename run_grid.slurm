@@ -9,11 +9,11 @@
 #   sbatch run_grid.slurm
 # -----------------------------------------------------------------------------
 
-#SBATCH --job-name=inverting_gradients_grid_master
+#SBATCH --job-name=april_ig_grid_master_1
 #SBATCH --output=slurm_logs/master_%j.out
 #SBATCH --error=slurm_logs/master_%j.err
-#SBATCH --partition=ada
-#SBATCH --nodelist=cn9
+#SBATCH --partition=short
+#SBATCH --nodelist=cn5
 #SBATCH --gres=gpu:1
 #SBATCH --mem=32G
 #SBATCH --cpus-per-task=4
@@ -65,15 +65,16 @@ cd "${BASE_DIR}"
 echo "Virtual environment activated successfully."
 
 
-ATTACK=invertinggradients
+ATTACK=april_optimization
 # -----------------------------------------------------------------------------
 # 1. Define the grid
 # -----------------------------------------------------------------------------
-BATCH_SIZES=(1 4 16)
-STEP_SIZES=(0.1 0.2)
+BATCH_SIZES=(4 8 16 64)
+STEP_SIZES=(0.1)
 OBJ_SCALES=(1.0)
-TV_SCALES=(0.01 0.1 0.2 0.5)
+TV_SCALES=(0.0001 0.001 0.01 0.1 0.2 0.5)
 # PATCH_SCALES=(0.1)
+PE_SCALE=0.1
 
 # -----------------------------------------------------------------------------
 # 2. Iterate through combinations and submit jobs
@@ -86,7 +87,7 @@ for bs in "${BATCH_SIZES[@]}"; do
             for tv in "${TV_SCALES[@]}"; do
                 # for ps in "${PATCH_SCALES[@]}"; do
 
-                JOB_NAME="invertinggradients_bs${bs}_ss${ss}_os${os}_tv${tv}"
+                JOB_NAME="${ATTACK}_bs${bs}_ss${ss}_os${os}_pes${PE_SCALE}_tv${tv}"
 
                 echo "Submitting job $count: $JOB_NAME"
 
@@ -100,15 +101,17 @@ for bs in "${BATCH_SIZES[@]}"; do
                     attack=${ATTACK} \
                     attack.optim.step_size=${ss} \
                     attack.objective.scale=${os} \
+                    attack.objective.posembed_scale=${PE_SCALE} \
                     attack.regularization.total_variation.scale=${tv} \
                     save_reconstruction=true \
                     dryrun=False \
                     job_name="${JOB_NAME}" \
                     num_trials=3 \
                     case.impl.threads=4
-
+                
+                # case.user.num_data_points='${case.data.batch_size}' \
                 count=$((count + 1))
-
+                echo "Job complete $count: $JOB_NAME"
             done
         done
     done

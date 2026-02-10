@@ -4,8 +4,9 @@ defaults:
 type: invertinggradients
 
 objective:
-  type: cosine-similarity
+  type: cosine-grad-cossim-posembed # cosine-similarity
   scale: 1.0 # need to have a much smaller scale like 0.0001 for euclidean objectives
+  posembed_scale: 0.1
 
 restarts:
   num_trials: 1

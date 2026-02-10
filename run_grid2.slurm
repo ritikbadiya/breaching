@@ -9,11 +9,11 @@
 #   sbatch run_grid.slurm
 # -----------------------------------------------------------------------------
 
-#SBATCH --job-name=inverting_gradients_grid_master
+#SBATCH --job-name=april_ig_grid_master_2
 #SBATCH --output=slurm_logs/master_%j.out
 #SBATCH --error=slurm_logs/master_%j.err
-#SBATCH --partition=ada
-#SBATCH --nodelist=cn7
+#SBATCH --partition=short
+#SBATCH --nodelist=cn2
 #SBATCH --gres=gpu:1
 #SBATCH --mem=32G
 #SBATCH --cpus-per-task=4
@@ -69,11 +69,12 @@ ATTACK=invertinggradients
 # -----------------------------------------------------------------------------
 # 1. Define the grid
 # -----------------------------------------------------------------------------
-BATCH_SIZES=(64 128)
-STEP_SIZES=(0.1 0.2)
+BATCH_SIZES=(1 4)
+STEP_SIZES=(0.1)
 OBJ_SCALES=(1.0)
-TV_SCALES=(0.01 0.1 0.2 0.5)
+TV_SCALES=(0.1)
 # PATCH_SCALES=(0.1)
+PE_SCALES=(0.001 0.01 0.1 0.5 1.0)
 
 # -----------------------------------------------------------------------------
 # 2. Iterate through combinations and submit jobs
@@ -84,31 +85,33 @@ for bs in "${BATCH_SIZES[@]}"; do
     for ss in "${STEP_SIZES[@]}"; do
         for os in "${OBJ_SCALES[@]}"; do
             for tv in "${TV_SCALES[@]}"; do
-                # for ps in "${PATCH_SCALES[@]}"; do
+                for pes in "${PE_SCALES[@]}"; do
 
-                JOB_NAME="invertinggradients_bs${bs}_ss${ss}_os${os}_tv${tv}"
+                    JOB_NAME="${ATTACK}_bs${bs}_ss${ss}_os${os}_pes${PE_SCALE}_tv${tv}"
 
-                echo "Submitting job $count: $JOB_NAME"
+                    echo "Submitting job $count: $JOB_NAME"
 
-                python benchmark_breaches.py \
-                    case=1_single_image_small \
-                    case/data=MNIST \
-                    case.model=vit_custom \
-                    case.server.pretrained=False \
-                    case.data.batch_size=${bs} \
-                    case.user.num_data_points='${case.data.batch_size}' \
-                    attack=${ATTACK} \
-                    attack.optim.step_size=${ss} \
-                    attack.objective.scale=${os} \
-                    attack.regularization.total_variation.scale=${tv} \
-                    save_reconstruction=true \
-                    dryrun=False \
-                    job_name="${JOB_NAME}" \
-                    num_trials=3 \
-                    case.impl.threads=4
+                    python benchmark_breaches.py \
+                        case=1_single_image_small \
+                        case/data=MNIST \
+                        case.model=vit_custom \
+                        case.server.pretrained=False \
+                        case.data.batch_size=${bs} \
+                        case.user.num_data_points='${case.data.batch_size}' \
+                        attack=${ATTACK} \
+                        attack.optim.step_size=${ss} \
+                        attack.objective.scale=${os} \
+                        attack.objective.posembed_scale=${pes} \
+                        attack.regularization.total_variation.scale=${tv} \
+                        save_reconstruction=true \
+                        dryrun=False \
+                        job_name="${JOB_NAME}" \
+                        num_trials=3 \
+                        case.impl.threads=4
 
-                count=$((count + 1))
-
+                    count=$((count + 1))
+                    echo "Job complete $count: $JOB_NAME"
+                done
             done
         done
     done

@@ -65,16 +65,17 @@ cd "${BASE_DIR}"
 echo "Virtual environment activated successfully."
 
 
-ATTACK=invertinggradients
+ATTACK=cgir
 # -----------------------------------------------------------------------------
 # Single run (no loops)
 # -----------------------------------------------------------------------------
 BS=1
-SS=0.1
+SS=0.01
 OS=1.0
 TV=0.01
+PE_SCALE=0.01
 
-JOB_NAME="invertinggradients_bs${BS}_ss${SS}_os${OS}_tv${TV}"
+JOB_NAME="invertinggradients_bs${BS}_ss${SS}_os${OS}_tv${TV}_pes${PE_SCALE}"
 
 echo "Running single job: $JOB_NAME"
 
@@ -89,6 +90,7 @@ python benchmark_breaches.py \
     attack.optim.step_size=${SS} \
     attack.objective.scale=${OS} \
     attack.regularization.total_variation.scale=${TV} \
+    attack.objective.posembed_scale=${PE_SCALE} \
     save_reconstruction=true \
     dryrun=False \
     job_name="${JOB_NAME}" \
