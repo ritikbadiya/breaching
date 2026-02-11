@@ -10,17 +10,17 @@ objective:
   posembed_scale: 0.1
 
 generator:
-  type: stylegan2
+  type: styleganxl
   z_dim: 100
   ngf: 64
   nc: 3
   # network_wts: "${hydra:runtime.cwd}/breaching/pretrained/DCGAN/netG_epoch_199.pth"
   # type: styleganxl
-  # network_wts: "${hydra:runtime.cwd}/breaching/pretrained/StyleGANXL/cifar10.pkl"
+  network_wts: "${hydra:runtime.cwd}/breaching/pretrained/StyleGANXL/cifar10.pkl"
   # type: biggan
   # network_wts: "${hydra:runtime.cwd}/breaching/pretrained/BigGAN/pytorch_model.bin"
   # type: stylegan2
-  network_wts: "${hydra:runtime.cwd}/breaching/pretrained/StyleGAN2/cifar10.pkl"
+  # network_wts: "${hydra:runtime.cwd}/breaching/pretrained/StyleGAN2/cifar10.pkl"
 
 
 restarts:
