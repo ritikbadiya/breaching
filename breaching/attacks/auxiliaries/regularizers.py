@@ -5,6 +5,7 @@ import torchvision
 from .deepinversion import DeepInversionFeatureHook
 import logging
 import kornia as K
+from typing import Union, List
 
 log = logging.getLogger(__name__)
 
@@ -528,6 +529,67 @@ class PatchPrior(torch.nn.Module):
     def __repr__(self):
         return f"Patch Prior Total Variation, scale={self.scale}, patch_size={self.patch_size}, p={self.inner_exp} q={self.outer_exp}. {'Color TV: double oppponents' if self.double_opponents else ''}"
 
+class GroupLazyRegularization(torch.nn.Module):
+    """Group lazy regularization - takes the mean over pixels as the consensus sample."""
+
+    def __init__(self, setup, scale=0.1, *args, **kwargs):
+        super().__init__()
+        self.setup = setup
+        self.scale = scale
+
+    def compute_mean(self, x_list):
+        # x_list: list of tensors, each (B, C, H, W)
+        # Stack to (N, B, C, H, W) then mean over N to preserve (B, C, H, W).
+        return torch.stack(x_list, dim=0).mean(dim=0)
+
+    def initialize(self, models, *args, **kwargs):
+        pass
+
+    @torch.no_grad()
+    def compute_consensus(self, x_list):
+        """
+        Compute final consensus x_C by:
+        1) computing mean x_m
+        2) aligning each x_s to x_m
+        3) averaging aligned results
+        """
+
+        x_C = self.compute_mean(x_list)
+        return x_C
+
+    def forward(self, 
+                tensor: Union[List, torch.Tensor], *args, **kwargs):
+        """
+        tensor: current reconstruction x̂
+        expects:
+            self.x_list = list of all candidate reconstructions
+        """
+        if isinstance(tensor, List) and len(tensor) < 2:
+            return torch.tensor(0.0)
+        elif not isinstance(tensor, List):
+            return torch.tensor(0.0)
+        elif tensor is None:
+            raise ValueError("Input tensor list cannot be None")
+
+        # compute consensus (no gradients through alignment)
+        with torch.no_grad():
+            x_C = self.compute_consensus(tensor)
+        # L2 penalty to consensus
+        if isinstance(tensor, List):
+            reg_loss = []
+            for t in tensor:
+                reg_loss.append(torch.mean((t - x_C)**2))
+        else:
+            reg_loss = [torch.mean((tensor - x_C)**2)]
+        return [self.scale * r for r in reg_loss]
+
+    def __repr__(self):
+        return (
+            f"Group (Consensus) Lazy Regularization via Pixel Mean only, "
+            f"scale={self.scale}"
+        )
+
+
 class GroupRegularization(torch.nn.Module):
     """Group regularization placeholder - not implemented."""
 
@@ -541,7 +603,8 @@ class GroupRegularization(torch.nn.Module):
         self.iter = 0
 
     def compute_mean(self, x_list):
-    # x_list: list of tensors, each (B, C, H, W)
+        # x_list: list of tensors, each (B, C, H, W)
+        # Stack to (N, B, C, H, W) then mean over N to preserve (B, C, H, W).
         return torch.stack(x_list, dim=0).mean(dim=0)
 
     def initialize(self, models, *args, **kwargs):
@@ -690,6 +753,7 @@ regularizer_lookup = dict(
     image_prior=ImagePrior,
     patch_prior=PatchPrior,
     group_regularization=GroupRegularization,
+    group_lazy_regularization=GroupLazyRegularization,
     sign_regularization=SignRegularization,
     mi_regularization=MIRegularization,
     l2_regularization=L2Regularization,

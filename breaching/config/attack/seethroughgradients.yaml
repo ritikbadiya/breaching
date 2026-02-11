@@ -34,5 +34,6 @@ regularization:
     pnorm: 2
   deep_inversion: # This is batchnorm matching to buffers provided by the user [which can be either actual stats or global]
     scale: 0.1 #  reduce this value if user.provide_buffers=False
-  # group_regularization: # Not implemented. Unclear to me how this was implemented without accesss to the source code
-  #  scale: 0.01
+  group_lazy_regularization: # Not implemented. Unclear to me how this was implemented without accesss to the source code
+    parallel: True
+    scale: 0.01
