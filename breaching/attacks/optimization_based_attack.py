@@ -122,78 +122,75 @@ class OptimizationBasedAttacker(_BaseAttacker):
         candidates = [candidate.detach().clone().requires_grad_(True) for _ in range(num_trials)]
         log.info(f"Candidate Shape: {candidate.shape}")
         if initial_data is not None:
-            candidate.data = initial_data.data.clone().to(**self.setup)
+            for cand in candidates:
+                cand.data = initial_data.data.clone().to(**self.setup)
         
         best_candidates = [candidate.detach().clone() for candidate in candidates]
         minimal_values_so_far = torch.as_tensor([float("inf")] * num_trials, **self.setup)
 
         # Initialize optimizers
         optimizers, schedulers = [], []
-        for candidate in candidates:
-            optimizer, scheduler = self._init_optimizer([candidate])
-            optimizers.append(optimizer)
-            schedulers.append(scheduler)
+        use_single_optimizer = self.cfg.optim.optimizer.lower() == "l-bfgs"
+        optimizer = None
+        scheduler = None
+        if use_single_optimizer:
+            optimizer, scheduler = self._init_optimizer(candidates)
+        else:
+            for candidate in candidates:
+                opt, sched = self._init_optimizer([candidate])
+                optimizers.append(opt)
+                schedulers.append(sched)
 
         current_wallclock = time.time()
-        self.current_task_loss = []
+        parallel_regularizers = getattr(self, "parallel_regularizers", [])
         try:
             for iteration in range(self.cfg.optim.max_iterations):
-                objective_values = []
-                self.current_task_loss = []
-                # SERIAL PROCESSING
-                for candidate in candidates:
-                    partial_objective, total_task_loss = self._partial_compute_objective(candidate, labels, rec_model, optimizer, shared_data, iteration)
-                    self.current_task_loss.append(total_task_loss)
-                    objective_values.append(partial_objective)
-                # PARALLEL REGULARIZATION
-                #########################################
-                # Trial 1________                   ____________
-                #                \                 /
-                # Trial 2---------+--(Group Reg)--+-------------
-                # Trial 3________/                 \____________
-                #########################################
-                for regularizer in self.parallel_regularizers:
-                    reg_loss = regularizer(candidates)
-                    for obj, reg in zip(objective_values, reg_loss):
-                        obj += reg
-                # BACK TO SERIAL PROCESSING
-                for candidate, total_objective, optimizer, scheduler in zip(candidates, objective_values, optimizers, schedulers):
-                    if total_objective.requires_grad:
-                        total_objective.backward(inputs=candidate, create_graph=False)
-                    with torch.no_grad():
-                        if self.cfg.optim.langevin_noise > 0:
-                            step_size = optimizer.param_groups[0]["lr"]
-                            noise_map = torch.randn_like(candidate.grad)
-                            candidate.grad += self.cfg.optim.langevin_noise * step_size * noise_map
-                        if self.cfg.optim.grad_clip is not None:
-                            grad_norm = candidate.grad.norm()
-                            if grad_norm > self.cfg.optim.grad_clip:
-                                candidate.grad.mul_(self.cfg.optim.grad_clip / (grad_norm + 1e-6))
-                        if self.cfg.optim.signed is not None:
-                            if self.cfg.optim.signed == "soft":
-                                scaling_factor = (
-                                    1 - iteration / self.cfg.optim.max_iterations
-                                )  # just a simple linear rule for now
-                                candidate.grad.mul_(scaling_factor).tanh_().div_(scaling_factor)
-                            elif self.cfg.optim.signed == "hard":
-                                candidate.grad.sign_()
-                            else:
-                                pass
-                    optimizer.step()
+                if use_single_optimizer:
+                    closure = self._compute_combined_objective(
+                        candidates,
+                        labels,
+                        rec_model,
+                        optimizer,
+                        optimizers,
+                        shared_data,
+                        iteration,
+                        parallel_regularizers,
+                        use_single_optimizer,
+                    )
+                    optimizer.step(closure)
                     scheduler.step()
+                else:
+                    closure = self._compute_combined_objective(
+                        candidates,
+                        labels,
+                        rec_model,
+                        optimizer,
+                        optimizers,
+                        shared_data,
+                        iteration,
+                        parallel_regularizers,
+                        use_single_optimizer,
+                    )
+                    _ = closure()
+                    for opt, sched in zip(optimizers, schedulers):
+                        opt.step()
+                        sched.step()
+
+                objective_values = self.current_objective_values
+                task_losses = self.current_task_losses
                 
                 with torch.no_grad():
                     # Project into image space
-                    for candidate, objective_value, minimal_value_so_far, best_candidate in zip(candidates, objective_values, minimal_values_so_far, best_candidates):
+                    for idx, (candidate, objective_value) in enumerate(zip(candidates, objective_values)):
                         if self.cfg.optim.boxed:
                             candidate.data = torch.max(torch.min(candidate, (1 - self.dm) / self.ds), -self.dm / self.ds)
-                        if objective_value < minimal_value_so_far:
-                            minimal_value_so_far = objective_value.detach()
-                            best_candidate = candidate.detach().clone()
+                        if objective_value < minimal_values_so_far[idx]:
+                            minimal_values_so_far[idx] = objective_value.detach()
+                            best_candidates[idx] = candidate.detach().clone()
 
                 if iteration + 1 == self.cfg.optim.max_iterations or iteration % self.cfg.optim.callback == 0:
                     timestamp = time.time()
-                    for idx, (objective_value, task_loss) in enumerate(zip(objective_values, self.current_task_loss)):
+                    for idx, (objective_value, task_loss) in enumerate(zip(objective_values, task_losses)):
                         log.info(
                             f"| Trial: {idx} | It: {iteration + 1} | Rec. loss: {objective_value.item():2.4f} | "
                             f" Task loss: {task_loss.item():2.4f} | T: {timestamp - current_wallclock:4.2f}s"
@@ -212,6 +209,7 @@ class OptimizationBasedAttacker(_BaseAttacker):
         except KeyboardInterrupt:
             print(f"Recovery interrupted manually in iteration {iteration}!")
             pass
+        return best_candidates
 
     def _run_trial(self, rec_model, shared_data, labels, stats, trial, initial_data=None, dryrun=False):
         """Run a single reconstruction trial."""
@@ -317,29 +315,87 @@ class OptimizationBasedAttacker(_BaseAttacker):
             return total_objective
 
         return closure
-    
-    def _partial_compute_objective(self, candidate, labels, rec_model, optimizer, shared_data, iteration):
-        optimizer.zero_grad()
 
-        if self.cfg.differentiable_augmentations:
-            candidate_augmented = self.augmentations(candidate)
-        else:
-            candidate_augmented = candidate
-            candidate_augmented.data = self.augmentations(candidate.data)
+    def _compute_combined_objective(
+        self,
+        candidates,
+        labels,
+        rec_model,
+        optimizer,
+        optimizers,
+        shared_data,
+        iteration,
+        parallel_regularizers,
+        use_single_optimizer,
+    ):
+        def apply_grad_transforms(candidate, opt):
+            if self.cfg.optim.langevin_noise > 0:
+                step_size = opt.param_groups[0]["lr"]
+                noise_map = torch.randn_like(candidate.grad)
+                candidate.grad += self.cfg.optim.langevin_noise * step_size * noise_map
+            if self.cfg.optim.grad_clip is not None:
+                grad_norm = candidate.grad.norm()
+                if grad_norm > self.cfg.optim.grad_clip:
+                    candidate.grad.mul_(self.cfg.optim.grad_clip / (grad_norm + 1e-6))
+            if self.cfg.optim.signed is not None:
+                if self.cfg.optim.signed == "soft":
+                    scaling_factor = (
+                        1 - iteration / self.cfg.optim.max_iterations
+                    )  # just a simple linear rule for now
+                    candidate.grad.mul_(scaling_factor).tanh_().div_(scaling_factor)
+                elif self.cfg.optim.signed == "hard":
+                    candidate.grad.sign_()
 
-        total_objective = 0
-        total_task_loss = 0
-        for model, data in zip(rec_model, shared_data):
-            objective, task_loss = self.objective(model, data["gradients"], candidate_augmented, labels)
-            total_objective += objective
-            total_task_loss += task_loss
-        # log.info(f"Objective Loss: {objective.item():2.4f}")
-        # log.info(f"Number of regularizers: {len(self.regularizers)}")
-        for regularizer in self.regularizers:
-            temp_loss = regularizer(candidate_augmented)
-            # log.info(f"Regularizer Loss: {temp_loss.item():2.4f}")
-            total_objective += temp_loss
-        return total_objective, total_task_loss
+        def closure():
+            if use_single_optimizer:
+                optimizer.zero_grad()
+            else:
+                for opt in optimizers:
+                    opt.zero_grad()
+
+            objective_values = []
+            task_losses = []
+
+            for candidate in candidates:
+                if self.cfg.differentiable_augmentations:
+                    candidate_augmented = self.augmentations(candidate)
+                else:
+                    candidate_augmented = candidate
+                    candidate_augmented.data = self.augmentations(candidate.data)
+
+                total_objective = 0
+                total_task_loss = 0
+                for model, data in zip(rec_model, shared_data):
+                    objective, task_loss = self.objective(model, data["gradients"], candidate_augmented, labels)
+                    total_objective += objective
+                    total_task_loss += task_loss
+                for regularizer in self.regularizers:
+                    total_objective += regularizer(candidate_augmented)
+
+                objective_values.append(total_objective)
+                task_losses.append(total_task_loss)
+
+            for regularizer in parallel_regularizers:
+                reg_loss = regularizer(candidates)
+                for idx, reg in enumerate(reg_loss):
+                    objective_values[idx] = objective_values[idx] + reg
+
+            total_objective = sum(objective_values)
+            if total_objective.requires_grad:
+                total_objective.backward(inputs=candidates, create_graph=False)
+            with torch.no_grad():
+                if use_single_optimizer:
+                    for candidate in candidates:
+                        apply_grad_transforms(candidate, optimizer)
+                else:
+                    for candidate, opt in zip(candidates, optimizers):
+                        apply_grad_transforms(candidate, opt)
+
+            self.current_objective_values = objective_values
+            self.current_task_losses = task_losses
+            return total_objective
+
+        return closure
 
     def _score_trial(self, candidate, labels, rec_model, shared_data):
         """Score candidate solutions based on some criterion."""
