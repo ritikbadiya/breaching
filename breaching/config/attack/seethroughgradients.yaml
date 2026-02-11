@@ -33,9 +33,18 @@ regularization:
     scale: 1e-6
     pnorm: 2
   deep_inversion: # This is batchnorm matching to buffers provided by the user [which can be either actual stats or global]
-    scale: 0.1 #  reduce this value if user.provide_buffers=False
+    scale: 0.1 #  reduce this value if user.provide_buffers: False
   group_regularization: # Not implemented. Unclear to me how this was implemented without accesss to the source code
     parallel: True
     scale: 0.01
+    coarse_iters: 1000 
+    warmup_iters: 0 
+    ransac_model_path: None 
+    kernel_size: 7 
+    nb_scale: 7 
+    coarse_tolerance: 0.05 
+    min_size: 32 
+    scale_r: 1.2 
+    imageNet: False 
   # exploration_noise:
   #   scale: 0.2
