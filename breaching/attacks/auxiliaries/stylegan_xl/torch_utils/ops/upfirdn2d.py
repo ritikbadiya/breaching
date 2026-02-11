@@ -20,6 +20,7 @@ from . import conv2d_gradfix
 
 #----------------------------------------------------------------------------
 
+_inited = False
 _plugin = None
 
 def _custom_ops_disabled():
@@ -29,10 +30,11 @@ def _custom_ops_disabled():
     return str(flag).strip().lower() not in ('0', 'false', 'no', '')
 
 def _init():
-    global _plugin
+    global _inited, _plugin
     if _custom_ops_disabled():
         return False
-    if _plugin is None:
+    if not _inited:
+        _inited = True
         try:
             _plugin = custom_ops.get_plugin(
                 module_name='upfirdn2d_plugin',
