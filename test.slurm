@@ -22,7 +22,12 @@
 # echo "Working directory: $(pwd)"
 
 # Load Python module
+module avail cuda
 module load cuda/12.4
+which nvcc
+nvcc --version
+# export TORCH_CUDA_ARCH_LIST=8.9
+
 mkdir -p slurm_logs
 # -----------------------------------------------------------------------------
 # Activate virtual environment (SLURM-safe)
@@ -88,8 +93,6 @@ python -c "import pathlib; p=pathlib.Path('breaching/attacks/auxiliaries/stylega
 python -c "import torch; print(torch.version.cuda)"
 
 ls -l breaching/attacks/auxiliaries/stylegan_xl/dnnlib/util.py
-
-export TORCH_CUDA_ARCH_LIST=8.9
 
 python benchmark_breaches.py \
     case=1_single_image_small \
