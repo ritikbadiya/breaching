@@ -1,7 +1,11 @@
 """Various regularizers that can be re-used for multiple attacks."""
 
 import torch
+import torch.nn.functional as F
 import torchvision
+import importlib.util
+from pathlib import Path
+from types import SimpleNamespace
 from .deepinversion import DeepInversionFeatureHook
 import logging
 import kornia as K
@@ -591,16 +595,57 @@ class GroupLazyRegularization(torch.nn.Module):
 
 
 class GroupRegularization(torch.nn.Module):
-    """Group regularization placeholder - not implemented."""
+    """Group regularization via RANSAC-Flow alignment and consensus averaging."""
 
-    def __init__(self, setup, scale=0.1, aligner=None, x_list=None, warmup_iters=0):
+    def __init__(
+        self,
+        setup,
+        scale=0.1,
+        coarse_iters=1000,
+        warmup_iters=0,
+        ransac_model_path=None,
+        kernel_size=7,
+        nb_scale=7,
+        coarse_tolerance=0.05,
+        min_size=32,
+        scale_r=1.2,
+        imageNet=False,
+        mean=None,
+        std=None,
+        *args,
+        **kwargs
+    ):
         super().__init__()
         self.setup = setup
         self.scale = scale
-        self.aligner = aligner
-        self.x_list = x_list
+        self.coarse_iters = coarse_iters
         self.warmup_iters = warmup_iters
         self.iter = 0
+        self.imageNet = imageNet
+
+        ransac_root = Path(__file__).resolve().parent / "RANSAC-Flow"
+        default_model = ransac_root / "model" / "pretrained" / "MegaDepth_Theta1_Eta001_Grad1_0.774.pth"
+        model_path = ransac_model_path or str(default_model)
+
+        if not Path(model_path).exists():
+            log.warning(f"RANSAC-Flow model not found at {model_path}. Alignment will fail.")
+
+        self._ransac_args = SimpleNamespace(
+            resumePth=model_path,
+            kernelSize=kernel_size,
+            nbScale=nb_scale,
+            coarseIter=coarse_iters,
+            coarsetolerance=coarse_tolerance,
+            minSize=min_size,
+            scaleR=scale_r,
+            outdir=None,
+        )
+        self._ransac_module = None
+        self._ransac_network = None
+        self._coarse_model = None
+        self._coarse_model_params = None
+        self.dm = self._format_stats(mean, setup, default=0.0)
+        self.ds = self._format_stats(std, setup, default=1.0)
 
     def compute_mean(self, x_list):
         # x_list: list of tensors, each (B, C, H, W)
@@ -610,45 +655,167 @@ class GroupRegularization(torch.nn.Module):
     def initialize(self, models, *args, **kwargs):
         self.iter = 0
 
+    def _get_ransac_module(self):
+        if self._ransac_module is None:
+            module_path = Path(__file__).resolve().parent / "RANSAC-Flow" / "quick_start" / "alignNimages.py"
+            spec = importlib.util.spec_from_file_location("ransacflow_alignNimages", str(module_path))
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            self._ransac_module = module
+        return self._ransac_module
+
+    def _get_ransac_network(self):
+        if self._ransac_network is None:
+            module = self._get_ransac_module()
+            _, network = module._load_networks(self._ransac_args.resumePth, self._ransac_args.kernelSize)
+            self._ransac_network = network
+        return self._ransac_network
+
+    def _get_coarse_model(self, module):
+        params = (
+            self._ransac_args.nbScale,
+            self._ransac_args.coarseIter,
+            self._ransac_args.coarsetolerance,
+            self._ransac_args.minSize,
+            self._ransac_args.scaleR,
+            self.imageNet,
+            tuple(self._ransac_args.mean) if hasattr(self._ransac_args, "mean") else None,
+            tuple(self._ransac_args.std) if hasattr(self._ransac_args, "std") else None,
+        )
+        if self._coarse_model is None or self._coarse_model_params != params:
+            self._coarse_model = module.CoarseAlign(
+                self._ransac_args.nbScale,
+                self._ransac_args.coarseIter,
+                self._ransac_args.coarsetolerance,
+                'Homography',
+                self._ransac_args.minSize,
+                segId=1,
+                segFg=True,
+                imageNet=self.imageNet,
+                scaleR=self._ransac_args.scaleR,
+                mean=self._ransac_args.mean if hasattr(self._ransac_args, "mean") else None,
+                std=self._ransac_args.std if hasattr(self._ransac_args, "std") else None,
+            )
+            self._coarse_model_params = params
+        return self._coarse_model
+
+    def _stats_to_list(self, tensor, channels):
+        t = tensor.detach().flatten().cpu()
+        if t.numel() == 1:
+            return [float(t.item())] * channels
+        if t.numel() >= channels:
+            return [float(x) for x in t[:channels]]
+        return [float(x) for x in t] + [float(t[-1])] * (channels - t.numel())
+
+    def _format_stats(self, value, setup, default):
+        if value is None:
+            tensor = torch.tensor(default, **setup)
+        else:
+            tensor = torch.as_tensor(value, **setup)
+        if tensor.ndim == 0:
+            return tensor.view(1, 1, 1, 1)
+        if tensor.ndim == 1:
+            return tensor[None, :, None, None]
+        return tensor
+
+    def _denorm(self, x):
+        dm = self.dm.to(device=x.device, dtype=x.dtype)
+        ds = self.ds.to(device=x.device, dtype=x.dtype)
+        if x.dim() == 3:
+            dm = dm[0]
+            ds = ds[0]
+        return x * ds + dm
+
+    def _renorm(self, x):
+        dm = self.dm.to(device=x.device, dtype=x.dtype)
+        ds = self.ds.to(device=x.device, dtype=x.dtype)
+        if x.dim() == 3:
+            dm = dm[0]
+            ds = ds[0]
+        return (x - dm) / ds
+
+    def _tensor_to_pil(self, x):
+        x = x.detach().float().cpu()
+        x = self._denorm(x)
+        x = x.clamp(0.0, 1.0)
+        return torchvision.transforms.ToPILImage()(x)
+
+    def _pil_to_tensor(self, img, device, dtype):
+        x = torchvision.transforms.ToTensor()(img).to(device=device, dtype=dtype)
+        return self._renorm(x)
+
+    def set_normalization_stats(self, dm, ds):
+        # dm/ds are expected as (1, C, 1, 1) or scalar tensors
+        self.dm = dm.detach().clone()
+        self.ds = ds.detach().clone()
+
     @torch.no_grad()
     def compute_consensus(self, x_list):
         """
         Compute final consensus x_C by:
         1) computing mean x_m
-        2) aligning each x_s to x_m
+        2) aligning each x_s to x_m using RANSAC-Flow/quick_start/alignNimages.py
         3) averaging aligned results
         """
 
         x_m = self.compute_mean(x_list)
+        if self.setup["device"].type != "cuda":
+            log.warning("RANSAC-Flow alignment requires CUDA. Falling back to mean consensus.")
+            return x_m
 
-        aligned = []
-        for x_s in x_list:
-            x_s_aligned = self.aligner(x_s, x_m)
-            aligned.append(x_s_aligned)
+        module = self._get_ransac_module()
+        network = self._get_ransac_network()
+        channels = x_m.shape[1]
+        self._ransac_args.mean = self._stats_to_list(self.dm, channels)
+        self._ransac_args.std = self._stats_to_list(self.ds, channels)
+        coarse_model = self._get_coarse_model(module)
 
-        x_C = torch.stack(aligned, dim=0).mean(dim=0)
+        aligned_means = []
+        B = x_m.shape[0]
+        for b in range(B):
+            target_pil = self._tensor_to_pil(x_m[b])
+            source_pils = [self._tensor_to_pil(x_s[b]) for x_s in x_list]
+            aligned_pils = module.align_sources_to_target_images(
+                source_pils,
+                target_pil,
+                self._ransac_args,
+                network=network,
+                save=False,
+                imageNet=self.imageNet,
+                coarse_model=coarse_model,
+            )
+            aligned_tensors = [
+                self._pil_to_tensor(img, device=x_m.device, dtype=x_m.dtype) for img in aligned_pils
+            ]
+            aligned_means.append(torch.stack(aligned_tensors, dim=0).mean(dim=0))
+
+        x_C = torch.stack(aligned_means, dim=0)
         return x_C
 
-    def forward(self, tensor, *args, **kwargs):
+    def forward(self, tensor: Union[List, torch.Tensor], *args, **kwargs):
         """
         tensor: current reconstruction x̂
-        expects:
-            self.x_list = list of all candidate reconstructions
         """
-        self.iter += 1
-        # warmup: don't apply consensus too early
-        if self.iter < self.warmup_iters:
+        if tensor is None:
+            raise ValueError("Input tensor list cannot be None")
+        if not isinstance(tensor, List):
             return tensor.new_tensor(0.0)
+        if len(tensor) < 2:
+            return [t.new_tensor(0.0) for t in tensor]
 
-        if self.x_list is None or len(self.x_list) < 2:
-            return tensor.new_tensor(0.0)
+        self.iter += 1
+        if self.iter < self.warmup_iters:
+            return [t.new_tensor(0.0) for t in tensor]
 
         # compute consensus (no gradients through alignment)
         with torch.no_grad():
-            x_C = self.compute_consensus(self.x_list)
-        # L2 penalty to consensus
-        reg = torch.mean((tensor - x_C)**2)
-        return self.scale*reg
+            x_C = self.compute_consensus(tensor)
+        # log.info(f"Shape of Consensus sample: {x_C.shape}")
+
+        # if x_C.shape[2:] != tensor[0].shape[2:]:
+        #     x_C = F.interpolate(x_C, size=tensor[0].shape[2:], mode="bilinear", align_corners=False)
+        reg_loss = [torch.mean((t - x_C) ** 2) for t in tensor]
+        return [self.scale * r for r in reg_loss]
 
     def __repr__(self):
         return (
@@ -661,10 +828,15 @@ class MeanRegularization(torch.nn.Module):
         super().__init__()
         self.setup = setup # for putting things on right device
         self.scale = scale
-        self.register_buffer(
-            "means",
-            torch.tensor([0.491, 0.467, 0.421])
-        )
+        # self.register_buffer(
+        #     "means",
+        #     torch.tensor([0.491, 0.467, 0.421])
+        # )
+    
+    def set_normalization_stats(self, dm, ds):
+        # dm/ds are expected as (1, C, 1, 1) or scalar tensors
+        self.dm = dm.detach().clone()
+        self.ds = ds.detach().clone()
     
     def initialize(self, models, shared_data, labels, *args, **kwargs):
         pass
@@ -674,7 +846,7 @@ class MeanRegularization(torch.nn.Module):
         assert x.shape[1] == 3, "MeanRegularization expects 3-channel images"
 
         x_means = x.mean(dim=(0, 2, 3))  # (C,)
-        return self.scale*torch.mean((x_means - self.means)**2)
+        return self.scale*torch.mean((x_means - self.dm)**2)
     
     def __repr__(self):
         return f"Mean Regularization, scale={self.scale}"

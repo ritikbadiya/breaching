@@ -56,6 +56,16 @@ class _BaseAttacker:
         else:
             self.dm, self.ds = torch.tensor(0, **self.setup), torch.tensor(1, **self.setup)
 
+        # Push normalization stats into regularizers that need them.
+        if hasattr(self, "regularizers"):
+            for reg in self.regularizers:
+                if hasattr(reg, "set_normalization_stats"):
+                    reg.set_normalization_stats(self.dm, self.ds)
+        if hasattr(self, "parallel_regularizers"):
+            for reg in self.parallel_regularizers:
+                if hasattr(reg, "set_normalization_stats"):
+                    reg.set_normalization_stats(self.dm, self.ds)
+
         # Load server_payload into state:
         rec_models = self._construct_models_from_payload_and_buffers(server_payload, shared_data)
         shared_data = self._cast_shared_data(shared_data)
