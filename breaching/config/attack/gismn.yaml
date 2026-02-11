@@ -45,5 +45,5 @@ regularization:
     outer_exp: 1
   l2_regularization:
     scale: 1e-4
-  # group_regularization:
-  #   scale: 1e-4
+  group_regularization:
+    scale: 1e-4
