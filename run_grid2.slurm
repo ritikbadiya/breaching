@@ -9,11 +9,11 @@
 #   sbatch run_grid.slurm
 # -----------------------------------------------------------------------------
 
-#SBATCH --job-name=april_ig_grid_master_2
+#SBATCH --job-name=igpe_grid_master_2
 #SBATCH --output=slurm_logs/master_%j.out
 #SBATCH --error=slurm_logs/master_%j.err
-#SBATCH --partition=short
-#SBATCH --nodelist=cn2
+#SBATCH --partition=medium
+#SBATCH --nodelist=cn3
 #SBATCH --gres=gpu:1
 #SBATCH --mem=32G
 #SBATCH --cpus-per-task=4
