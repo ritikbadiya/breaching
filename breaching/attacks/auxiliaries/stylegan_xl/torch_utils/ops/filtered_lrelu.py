@@ -7,6 +7,8 @@
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 
 import os
+import warnings
+import traceback
 import numpy as np
 import torch
 import warnings
@@ -31,14 +33,21 @@ def _init():
     if _custom_ops_disabled():
         return False
     if _plugin is None:
-        _plugin = custom_ops.get_plugin(
-            module_name='filtered_lrelu_plugin',
-            sources=['filtered_lrelu.cpp', 'filtered_lrelu_wr.cu', 'filtered_lrelu_rd.cu', 'filtered_lrelu_ns.cu'],
-            headers=['filtered_lrelu.h', 'filtered_lrelu.cu'],
-            source_dir=os.path.dirname(__file__),
-            extra_cuda_cflags=['--use_fast_math'],
-        )
-    return True
+        try:
+            _plugin = custom_ops.get_plugin(
+                module_name='filtered_lrelu_plugin',
+                sources=['filtered_lrelu.cpp', 'filtered_lrelu_wr.cu', 'filtered_lrelu_rd.cu', 'filtered_lrelu_ns.cu'],
+                headers=['filtered_lrelu.h', 'filtered_lrelu.cu'],
+                source_dir=os.path.dirname(__file__),
+                extra_cuda_cflags=['--use_fast_math'],
+            )
+        except Exception:
+            warnings.warn(
+                'Failed to build CUDA kernels for filtered_lrelu. '
+                'Falling back to slow reference implementation. Details:\n\n'
+                + traceback.format_exc()
+            )
+    return _plugin is not None
 
 def _get_filter_size(f):
     if f is None:
