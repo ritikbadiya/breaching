@@ -3,6 +3,7 @@
 import torch
 import torch.nn.functional as F
 import torchvision
+import subprocess
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
@@ -644,6 +645,7 @@ class GroupRegularization(torch.nn.Module):
         self._ransac_network = None
         self._coarse_model = None
         self._coarse_model_params = None
+        self._ransac_checked = False
         self.dm = self._format_stats(mean, setup, default=0.0)
         self.ds = self._format_stats(std, setup, default=1.0)
 
@@ -664,7 +666,28 @@ class GroupRegularization(torch.nn.Module):
             self._ransac_module = module
         return self._ransac_module
 
+    def _ensure_ransac_models(self):
+        if self._ransac_checked:
+            return
+        self._ransac_checked = True
+        pretrained_dir = Path(__file__).resolve().parent / "RANSAC-Flow" / "model" / "pretrained"
+        download_script = pretrained_dir / "download_model.sh"
+        required = [
+            pretrained_dir / "resnet50_moco.pth",
+            Path(self._ransac_args.resumePth),
+        ]
+        if all(p.exists() for p in required):
+            return
+        if not download_script.exists():
+            log.warning(f"RANSAC-Flow download script not found at {download_script}.")
+            return
+        try:
+            subprocess.run(["bash", str(download_script)], cwd=str(pretrained_dir), check=True)
+        except Exception as exc:
+            log.warning(f"Failed to download RANSAC-Flow pretrained models: {exc}")
+
     def _get_ransac_network(self):
+        self._ensure_ransac_models()
         if self._ransac_network is None:
             module = self._get_ransac_module()
             _, network = module._load_networks(self._ransac_args.resumePth, self._ransac_args.kernelSize)
@@ -672,6 +695,7 @@ class GroupRegularization(torch.nn.Module):
         return self._ransac_network
 
     def _get_coarse_model(self, module):
+        self._ensure_ransac_models()
         params = (
             self._ransac_args.nbScale,
             self._ransac_args.coarseIter,
@@ -812,8 +836,8 @@ class GroupRegularization(torch.nn.Module):
             x_C = self.compute_consensus(tensor)
         # log.info(f"Shape of Consensus sample: {x_C.shape}")
 
-        # if x_C.shape[2:] != tensor[0].shape[2:]:
-        #     x_C = F.interpolate(x_C, size=tensor[0].shape[2:], mode="bilinear", align_corners=False)
+        if x_C.shape[2:] != tensor[0].shape[2:]:
+            x_C = F.interpolate(x_C, size=tensor[0].shape[2:], mode="bilinear", align_corners=False)
         reg_loss = [torch.mean((t - x_C) ** 2) for t in tensor]
         return [self.scale * r for r in reg_loss]
 
