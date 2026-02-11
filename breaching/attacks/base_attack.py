@@ -432,7 +432,7 @@ class _BaseAttacker:
             average_bias = torch.stack(bias_per_query).mean(dim=0)
             valid_classes = (average_bias < 0).nonzero()
             label_list += [*valid_classes.squeeze(dim=-1)]
-            tokens_in_input = embeddings[0]["grads"].norm(dim=-1).nonzero().squeeze(dim=-1)
+            tokens_in_input = self.embeddings[0]["grads"].norm(dim=-1).nonzero().squeeze(dim=-1) #MAY GIVE SOME ERROR
             for token in tokens_in_input:
                 if token not in label_list:
                     label_list.append(token)
