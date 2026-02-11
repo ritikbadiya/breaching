@@ -9,6 +9,8 @@
 """Custom PyTorch ops for efficient resampling of 2D images."""
 
 import os
+import warnings
+import traceback
 import numpy as np
 import torch
 
@@ -31,14 +33,21 @@ def _init():
     if _custom_ops_disabled():
         return False
     if _plugin is None:
-        _plugin = custom_ops.get_plugin(
-            module_name='upfirdn2d_plugin',
-            sources=['upfirdn2d.cpp', 'upfirdn2d.cu'],
-            headers=['upfirdn2d.h'],
-            source_dir=os.path.dirname(__file__),
-            extra_cuda_cflags=['--use_fast_math'],
-        )
-    return True
+        try:
+            _plugin = custom_ops.get_plugin(
+                module_name='upfirdn2d_plugin',
+                sources=['upfirdn2d.cpp', 'upfirdn2d.cu'],
+                headers=['upfirdn2d.h'],
+                source_dir=os.path.dirname(__file__),
+                extra_cuda_cflags=['--use_fast_math'],
+            )
+        except Exception:
+            warnings.warn(
+                'Failed to build CUDA kernels for upfirdn2d. '
+                'Falling back to slow reference implementation. Details:\n\n'
+                + traceback.format_exc()
+            )
+    return _plugin is not None
 
 def _parse_scaling(scaling):
     if isinstance(scaling, int):
