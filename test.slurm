@@ -89,22 +89,22 @@ python -c "import torch; print(torch.version.cuda)"
 
 ls -l breaching/attacks/auxiliaries/stylegan_xl/dnnlib/util.py
 
-# python benchmark_breaches.py \
-#     case=1_single_image_small \
-#     case/data=CIFAR10 \
-#     case.model=vit_custom \
-#     case.server.pretrained=False \
-#     case.data.batch_size=${BS} \
-#     case.user.num_data_points='${case.data.batch_size}' \
-#     attack=${ATTACK} \
-#     attack.optim.step_size=${SS} \
-#     attack.objective.scale=${OS} \
-#     attack.objective.posembed_scale=${PE_SCALE} \
-#     save_reconstruction=true \
-#     dryrun=False \
-#     job_name="${JOB_NAME}" \
-#     num_trials=3 \
-#     case.impl.threads=4
+python benchmark_breaches.py \
+    case=1_single_image_small \
+    case/data=CIFAR10 \
+    case.model=vit_custom \
+    case.server.pretrained=False \
+    case.data.batch_size=${BS} \
+    case.user.num_data_points='${case.data.batch_size}' \
+    attack=${ATTACK} \
+    attack.optim.step_size=${SS} \
+    attack.objective.scale=${OS} \
+    attack.objective.posembed_scale=${PE_SCALE} \
+    save_reconstruction=true \
+    dryrun=False \
+    job_name="${JOB_NAME}" \
+    num_trials=3 \
+    case.impl.threads=4
 
 echo "Single job finished at $(date)"
 

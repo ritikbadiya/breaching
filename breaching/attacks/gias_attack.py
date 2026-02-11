@@ -261,19 +261,18 @@ class GenImagePriorAttacker(OptimizationBasedAttacker):
 
                 with torch.no_grad():
                     # Project into image space
-                    with torch.no_grad():
-                        if self.cfg.generator.type == "biggan":
-                            label = self._make_cond_label(labels, self.setup["device"], self.num_classes)
-                            candidate = self.netG(self.noise, label, truncation=self.truncation)
-                        elif self.cfg.generator.type == "stylegan_xl":
-                            label = self._make_cond_label(labels, self.setup["device"], self.netG.c_dim)
-                            candidate = self.netG(self.noise, label, truncation_psi=self.truncation, noise_mode='random')
-                        elif self.cfg.generator.type in ("stylegan2", "stylegan2_ada"):
-                            label = self._make_cond_label(labels, self.setup["device"], self.netG.c_dim)
-                            candidate = self.netG(self.noise, label, truncation_psi=self.truncation, noise_mode='random')
-                        elif self.cfg.generator.type == "dcgan":
-                            candidate = self.netG(self.noise)
-                        candidate = self._resize_dcgan_output(candidate)
+                    if self.cfg.generator.type == "biggan":
+                        label = self._make_cond_label(labels, self.setup["device"], self.num_classes)
+                        candidate = self.netG(self.noise, label, truncation=self.truncation)
+                    elif self.cfg.generator.type == "stylegan_xl":
+                        label = self._make_cond_label(labels, self.setup["device"], self.netG.c_dim)
+                        candidate = self.netG(self.noise, label, truncation_psi=self.truncation, noise_mode='random')
+                    elif self.cfg.generator.type in ("stylegan2", "stylegan2_ada"):
+                        label = self._make_cond_label(labels, self.setup["device"], self.netG.c_dim)
+                        candidate = self.netG(self.noise, label, truncation_psi=self.truncation, noise_mode='random')
+                    elif self.cfg.generator.type == "dcgan":
+                        candidate = self.netG(self.noise)
+                    candidate = self._resize_dcgan_output(candidate)
                     if self.cfg.optim.boxed:
                         candidate.data = torch.max(torch.min(candidate, (1 - self.dm) / self.ds), -self.dm / self.ds)
                     if objective_value < minimal_value_so_far:
