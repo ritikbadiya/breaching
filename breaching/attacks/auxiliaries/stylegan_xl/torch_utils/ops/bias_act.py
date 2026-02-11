@@ -40,6 +40,7 @@ activation_funcs = {
 
 #----------------------------------------------------------------------------
 
+_inited = False
 _plugin = None
 _null_tensor = torch.empty([0])
 
@@ -50,10 +51,11 @@ def _custom_ops_disabled():
     return str(flag).strip().lower() not in ('0', 'false', 'no', '')
 
 def _init():
-    global _plugin
+    global _inited, _plugin
     if _custom_ops_disabled():
         return False
-    if _plugin is None:
+    if not _inited:
+        _inited = True
         try:
             _plugin = custom_ops.get_plugin(
                 module_name='bias_act_plugin',
