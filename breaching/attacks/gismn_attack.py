@@ -164,12 +164,14 @@ class GenerativeStyleMigrationAttacker(OptimizationBasedAttacker):
                                             dim_z=self.netG.config.z_dim, 
                                             truncation=self.truncation)
         elif self.cfg.generator.type == "stylegan_xl":
+            log.info(f"Loading StyleGAN-XL generator with weights from {self.cfg.generator.network_wts}")
             self.netG = build_stylegan_xl_generator(self.setup["device"], network_pkl=self.cfg.generator.network_wts)
             # Define noise
             self.noise = truncated_noise_sample(batch_size=self.batch_size, 
                                             dim_z=self.netG.z_dim, 
                                             truncation=self.truncation)
         elif self.cfg.generator.type in ("stylegan2", "stylegan2_ada"):
+            log.info(f"Loading StyleGAN2-ADA generator with weights from {self.cfg.generator.network_wts}")
             self.netG = build_stylegan2_ada_generator(self.setup["device"], network_pkl=self.cfg.generator.network_wts)
             # Define noise
             self.noise = truncated_noise_sample(batch_size=self.batch_size,

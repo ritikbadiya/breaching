@@ -12,17 +12,17 @@
 #SBATCH --job-name=testing
 #SBATCH --output=slurm_logs/master_%j.out
 #SBATCH --error=slurm_logs/master_%j.err
-#SBATCH --partition=medium
-#SBATCH --nodelist=cn3
+#SBATCH --partition=short
+#SBATCH --nodelist=cn5
 #SBATCH --gres=gpu:1
-#SBATCH --mem=32G
+#SBATCH --mem=16G
 #SBATCH --cpus-per-task=4
 
 # echo "Grid master started on $(hostname) at $(date)"
 # echo "Working directory: $(pwd)"
 
 # Load Python module
-# module load cuda/12.4
+module load cuda/12.4
 mkdir -p slurm_logs
 # -----------------------------------------------------------------------------
 # Activate virtual environment (SLURM-safe)
@@ -88,6 +88,8 @@ python -c "import pathlib; p=pathlib.Path('breaching/attacks/auxiliaries/stylega
 python -c "import torch; print(torch.version.cuda)"
 
 ls -l breaching/attacks/auxiliaries/stylegan_xl/dnnlib/util.py
+
+export TORCH_CUDA_ARCH_LIST=8.9
 
 python benchmark_breaches.py \
     case=1_single_image_small \
