@@ -31,6 +31,6 @@ regularization:
     # 0.2 # The old version did not take the mean dx + dy as the new version, so this corresponds to 0.1 in the old repo
     inner_exp: 1
     outer_exp: 1
-  # group_regularization:
-  #   scale: 0.0001
+  group_regularization:
+    scale: 0.0001
     
