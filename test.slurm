@@ -9,11 +9,11 @@
 #   sbatch run_grid.slurm
 # -----------------------------------------------------------------------------
 
-#SBATCH --job-name=inverting_gradients_grid_master
+#SBATCH --job-name=testing
 #SBATCH --output=slurm_logs/master_%j.out
 #SBATCH --error=slurm_logs/master_%j.err
-#SBATCH --partition=ada
-#SBATCH --nodelist=cn9
+#SBATCH --partition=medium
+#SBATCH --nodelist=cn3
 #SBATCH --gres=gpu:1
 #SBATCH --mem=32G
 #SBATCH --cpus-per-task=4
@@ -65,36 +65,47 @@ cd "${BASE_DIR}"
 echo "Virtual environment activated successfully."
 
 
-ATTACK=cgir
+ATTACK=gismn
 # -----------------------------------------------------------------------------
 # Single run (no loops)
 # -----------------------------------------------------------------------------
 BS=1
-SS=0.01
+SS=0.1
 OS=1.0
-TV=0.01
-PE_SCALE=0.01
+# TV=0.01
+PE_SCALE=0.1
 
-JOB_NAME="invertinggradients_bs${BS}_ss${SS}_os${OS}_tv${TV}_pes${PE_SCALE}"
+JOB_NAME="${ATTACK}_bs${BS}_ss${SS}_os${OS}_tv${TV}_pes${PE_SCALE}"
 
 echo "Running single job: $JOB_NAME"
 
-python benchmark_breaches.py \
-    case=1_single_image_small \
-    case/data=CIFAR10 \
-    case.model=vit_custom \
-    case.server.pretrained=False \
-    case.data.batch_size=${BS} \
-    case.user.num_data_points='${case.data.batch_size}' \
-    attack=${ATTACK} \
-    attack.optim.step_size=${SS} \
-    attack.objective.scale=${OS} \
-    attack.regularization.total_variation.scale=${TV} \
-    attack.objective.posembed_scale=${PE_SCALE} \
-    save_reconstruction=true \
-    dryrun=False \
-    job_name="${JOB_NAME}" \
-    num_trials=3 \
-    case.impl.threads=4
+python -c "import importlib.util; print(importlib.util.find_spec('distutils'))"
+
+python -c "import breaching.attacks.auxiliaries.stylegan_xl.dnnlib.util as u; import inspect; print(u.__file__); import pathlib; print('try/except strtobool' in pathlib.Path(u.__file__).read_text())"
+
+python -c "import pathlib; p=pathlib.Path('breaching/attacks/auxiliaries/stylegan_xl/dnnlib/util.py'); print(p.resolve()); print(p.read_text().splitlines()[31])"
+
+python -c "import torch; print(torch.version.cuda)"
+
+ls -l breaching/attacks/auxiliaries/stylegan_xl/dnnlib/util.py
+
+# python benchmark_breaches.py \
+#     case=1_single_image_small \
+#     case/data=CIFAR10 \
+#     case.model=vit_custom \
+#     case.server.pretrained=False \
+#     case.data.batch_size=${BS} \
+#     case.user.num_data_points='${case.data.batch_size}' \
+#     attack=${ATTACK} \
+#     attack.optim.step_size=${SS} \
+#     attack.objective.scale=${OS} \
+#     attack.objective.posembed_scale=${PE_SCALE} \
+#     save_reconstruction=true \
+#     dryrun=False \
+#     job_name="${JOB_NAME}" \
+#     num_trials=3 \
+#     case.impl.threads=4
 
 echo "Single job finished at $(date)"
+
+# attack.regularization.total_variation.scale=${TV} \

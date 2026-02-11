@@ -19,6 +19,8 @@ from .auxiliaries.BigGAN.utils import truncated_noise_sample, save_as_images, on
 
 from .auxiliaries.stylegan_xl import legacy, dnnlib
 from .auxiliaries.stylegan_xl.torch_utils import misc
+from .auxiliaries.stylegan2_ada import legacy as stylegan2_ada_legacy, dnnlib as stylegan2_ada_dnnlib
+from .auxiliaries.stylegan2_ada.torch_utils import misc as stylegan2_ada_misc
 
 import logging
 
@@ -56,6 +58,35 @@ def build_stylegan_xl_generator(
         init_kwargs.update(common_kwargs)
     return dnnlib.util.construct_class_by_name(**init_kwargs).to(device).eval()
 
+def build_stylegan2_ada_generator(
+    device,
+    network_pkl=None,
+    class_name='training.networks.Generator',
+    init_kwargs=None,
+    common_kwargs=None,
+):
+    """Construct a StyleGAN2-ADA generator and optionally load generator-only weights from a pickle."""
+    common_kwargs = common_kwargs or {}
+    if network_pkl is not None:
+        with stylegan2_ada_dnnlib.util.open_url(network_pkl) as f:
+            data = stylegan2_ada_legacy.load_network_pkl(f)
+        src_g = data['G_ema']
+        if init_kwargs is None:
+            return src_g.to(device).eval()
+        init_kwargs = dict(init_kwargs)
+        init_kwargs.setdefault('class_name', src_g.init_kwargs.get('class_name', class_name))
+        G = stylegan2_ada_dnnlib.util.construct_class_by_name(**init_kwargs).to(device).eval()
+        stylegan2_ada_misc.copy_params_and_buffers(src_g, G, require_all=False)
+        return G
+
+    if init_kwargs is None:
+        init_kwargs = dict(class_name=class_name, **common_kwargs)
+    else:
+        init_kwargs = dict(init_kwargs)
+        init_kwargs.setdefault('class_name', class_name)
+        init_kwargs.update(common_kwargs)
+    return stylegan2_ada_dnnlib.util.construct_class_by_name(**init_kwargs).to(device).eval()
+
 class GenerativeStyleMigrationAttacker(OptimizationBasedAttacker):
     """Implements an optimization-based attack that only recovers the patch information 
     by opyimization L2 loss on the the parameter gradients.
@@ -72,6 +103,12 @@ class GenerativeStyleMigrationAttacker(OptimizationBasedAttacker):
                                         posembed_scale=self.cfg.objective.posembed_scale)
             
         self.truncation = self.cfg.objective.truncation if hasattr(self.cfg.objective, 'truncation') else 0.4
+    
+    def _make_cond_label(self, labels, device, c_dim):
+        if c_dim == 0:
+            return torch.zeros([self.batch_size, 0], device=device)
+        label = one_hot_from_int(labels, batch_size=self.batch_size, num_classes=self.num_classes)
+        return torch.tensor(label, dtype=torch.float, device=device)
 
     def reconstruct(self, server_payload, shared_data, server_secrets=None, initial_data=None, dryrun=False):
         # Initialize stats module for later usage:
@@ -120,7 +157,24 @@ class GenerativeStyleMigrationAttacker(OptimizationBasedAttacker):
         # but we are primarily using BigGAN for now. Will change to StyleGAN-XL later
         # so we can directly use the architecture and randomly initialized weights for the attack
         # self.netG = BigGAN(self.bigganconfig).to(self.setup["device"])
-        self.netG = build_stylegan_xl_generator(self.setup["device"], network_pkl=self.cfg.objective.network_pkl)
+        if self.cfg.generator.type == "biggan":
+            self.netG = BigGAN(self.bigganconfig).to(self.setup["device"])
+            # Define noise
+            self.noise = truncated_noise_sample(batch_size=self.batch_size, 
+                                            dim_z=self.netG.config.z_dim, 
+                                            truncation=self.truncation)
+        elif self.cfg.generator.type == "stylegan_xl":
+            self.netG = build_stylegan_xl_generator(self.setup["device"], network_pkl=self.cfg.generator.network_wts)
+            # Define noise
+            self.noise = truncated_noise_sample(batch_size=self.batch_size, 
+                                            dim_z=self.netG.z_dim, 
+                                            truncation=self.truncation)
+        elif self.cfg.generator.type in ("stylegan2", "stylegan2_ada"):
+            self.netG = build_stylegan2_ada_generator(self.setup["device"], network_pkl=self.cfg.generator.network_wts)
+            # Define noise
+            self.noise = truncated_noise_sample(batch_size=self.batch_size,
+                                            dim_z=self.netG.z_dim,
+                                            truncation=self.truncation)
         #.from_pretrained('biggan-deep-128', cache_dir='./pretrained/models_128').to(self.setup["device"])
         self.netG.eval()
         # self.netG = BigGAN(self.bigganconfig).to(self.setup["device"])
@@ -162,11 +216,14 @@ class GenerativeStyleMigrationAttacker(OptimizationBasedAttacker):
 
                 with torch.no_grad():
                     # Project into image space
-                    label = one_hot_from_int(labels, batch_size=self.batch_size, num_classes=self.num_classes)
-                    label = torch.tensor(label, dtype=torch.float).to(self.setup["device"])
-                    try:
+                    if self.cfg.generator.type == "biggan":
+                        label = self._make_cond_label(labels, self.setup["device"], self.num_classes)
                         candidate = self.netG(self.noise, label, truncation=self.truncation)
-                    except:
+                    elif self.cfg.generator.type == "stylegan_xl":
+                        label = self._make_cond_label(labels, self.setup["device"], self.netG.c_dim)
+                        candidate = self.netG(self.noise, label, truncation_psi=self.truncation, noise_mode='random')
+                    elif self.cfg.generator.type in ("stylegan2", "stylegan2_ada"):
+                        label = self._make_cond_label(labels, self.setup["device"], self.netG.c_dim)
                         candidate = self.netG(self.noise, label, truncation_psi=self.truncation, noise_mode='random')
                     if self.cfg.optim.boxed:
                         candidate.data = torch.max(torch.min(candidate, (1 - self.dm) / self.ds), -self.dm / self.ds)
@@ -202,13 +259,14 @@ class GenerativeStyleMigrationAttacker(OptimizationBasedAttacker):
     def _compute_objective(self, netG, noise, labels, rec_model, optimizer, shared_data, iteration):
         def closure():
             optimizer.zero_grad()
-            label = one_hot_from_int(labels, batch_size=self.batch_size, num_classes=self.num_classes)
-            label = torch.tensor(label, dtype=torch.float).to(self.setup["device"])
-            try:
-                # For BigGAN model
+            if self.cfg.generator.type == "biggan":
+                label = self._make_cond_label(labels, self.setup["device"], self.num_classes)
                 candidate = netG(noise, label, truncation=self.truncation)
-            except:
-                # For StyleGAN-XL model
+            elif self.cfg.generator.type == "stylegan_xl":
+                label = self._make_cond_label(labels, self.setup["device"], netG.c_dim)
+                candidate = netG(noise, label, truncation_psi=self.truncation, noise_mode='random')
+            elif self.cfg.generator.type in ("stylegan2", "stylegan2_ada"):
+                label = self._make_cond_label(labels, self.setup["device"], netG.c_dim)
                 candidate = netG(noise, label, truncation_psi=self.truncation, noise_mode='random')
 
             if self.cfg.differentiable_augmentations:
