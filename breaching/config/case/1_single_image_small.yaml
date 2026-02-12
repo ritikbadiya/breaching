@@ -10,7 +10,7 @@ model: vit_custom
 
 user:
   provide_labels: False
-  num_data_points: 4
+  num_data_points: 1
 
 # Server and user:
 num_queries: 1
