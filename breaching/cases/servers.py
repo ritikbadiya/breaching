@@ -22,6 +22,7 @@ from .models.language_models import LearnablePositionalEmbedding, PositionalEmbe
 
 from .aux_training import train_encoder_decoder
 from .malicious_modifications.feat_decoders import generate_decoder
+from .models.parameter_utils import shared_parameters as model_shared_parameters
 
 from .malicious_modifications.classattack_utils import (
     check_with_tolerance,
@@ -139,7 +140,7 @@ class HonestServer:
         """Server payload to send to users. These are only references to simplfiy the simulation."""
 
         self.reconfigure_model(self.cfg_server.model_state, query_id)
-        honest_model_parameters = [p for p in self.model.parameters()]  # do not send only the generators
+        honest_model_parameters = model_shared_parameters(self.model)
         if self.cfg_server.provide_public_buffers:
             honest_model_buffers = [b for b in self.model.buffers()]
         else:
