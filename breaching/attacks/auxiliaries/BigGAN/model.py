@@ -15,6 +15,8 @@ from __future__ import (absolute_import, division, print_function, unicode_liter
 import os
 import logging
 import math
+import shutil
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -44,6 +46,67 @@ PRETRAINED_CONFIG_ARCHIVE_MAP = {
 
 WEIGHTS_NAME = 'pytorch_model.bin'
 CONFIG_NAME = 'config.json'
+
+def biggan_model_name_for_output_dim(output_dim):
+    if output_dim == 128:
+        return "biggan-deep-128"
+    if output_dim == 256:
+        return "biggan-deep-256"
+    if output_dim == 512:
+        return "biggan-deep-512"
+    return None
+
+def _default_biggan_pretrained_dir():
+    package_root = Path(__file__).resolve().parents[3]
+    return package_root / "pretrained" / "BigGAN"
+
+def _link_or_copy(src, dst):
+    if os.path.exists(dst):
+        return
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copyfile(src, dst)
+
+def ensure_pretrained_biggan_files(model_name, target_dir=None, cache_dir=None):
+    if model_name not in PRETRAINED_MODEL_ARCHIVE_MAP:
+        raise ValueError(f"Unknown BigGAN model name {model_name}.")
+
+    target_dir = Path(target_dir) if target_dir is not None else _default_biggan_pretrained_dir()
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    model_url = PRETRAINED_MODEL_ARCHIVE_MAP[model_name]
+    config_url = PRETRAINED_CONFIG_ARCHIVE_MAP[model_name]
+    resolved_model_file = cached_path(model_url, cache_dir=str(cache_dir) if cache_dir is not None else None)
+    resolved_config_file = cached_path(config_url, cache_dir=str(cache_dir) if cache_dir is not None else None)
+
+    target_model_file = target_dir / os.path.basename(model_url)
+    target_config_file = target_dir / os.path.basename(config_url)
+    _link_or_copy(resolved_model_file, str(target_model_file))
+    _link_or_copy(resolved_config_file, str(target_config_file))
+    return str(target_model_file), str(target_config_file)
+
+def resolve_pretrained_biggan_weights(model_name, requested_path=None, target_dir=None, cache_dir=None):
+    if requested_path and os.path.exists(requested_path):
+        return requested_path
+
+    candidate_dir = None
+    if requested_path:
+        candidate_dir = requested_path if os.path.isdir(requested_path) else os.path.dirname(requested_path)
+        if candidate_dir:
+            candidates = sorted(Path(candidate_dir).glob("biggan-deep-*-pytorch_model.bin"))
+            if len(candidates) == 1:
+                return str(candidates[0])
+
+    if model_name not in PRETRAINED_MODEL_ARCHIVE_MAP:
+        return None
+    if target_dir is None and candidate_dir:
+        target_dir = candidate_dir
+    target_model_file, _ = ensure_pretrained_biggan_files(
+        model_name, target_dir=target_dir, cache_dir=cache_dir
+    )
+    return target_model_file
 
 
 def snconv2d(eps=1e-12, **kwargs):

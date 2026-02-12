@@ -8,12 +8,19 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import time
+import os
+from pathlib import Path
 
 from .optimization_based_attack import OptimizationBasedAttacker
 from .auxiliaries.objectives import Euclidean, CosineSimilarity, objective_lookup
 from .auxiliaries.augmentations import augmentation_lookup
 
-from .auxiliaries.BigGAN.model import BigGAN, Generator
+from .auxiliaries.BigGAN.model import (
+    BigGAN,
+    Generator,
+    biggan_model_name_for_output_dim,
+    resolve_pretrained_biggan_weights,
+)
 from .auxiliaries.BigGAN.config import BigGANConfig, BigGAN32, BigGAN128, BigGAN256, BigGAN512
 from .auxiliaries.BigGAN.utils import truncated_noise_sample, save_as_images, one_hot_from_names, one_hot_from_int
 
@@ -137,6 +144,8 @@ class GenImagePriorAttacker(OptimizationBasedAttacker):
                                         posembed_scale=self.cfg.objective.posembed_scale)
             
         self.truncation = self.cfg.objective.truncation if hasattr(self.cfg.objective, 'truncation') else 0.4
+        self._biggan_weights_path = None
+        self._biggan_state_dict = None
 
     def _resize_dcgan_output(self, x):
         if self.cfg.generator.type != "dcgan":
@@ -153,6 +162,65 @@ class GenImagePriorAttacker(OptimizationBasedAttacker):
             return torch.zeros([self.batch_size, 0], device=device)
         label = one_hot_from_int(labels, batch_size=self.batch_size, num_classes=self.num_classes)
         return torch.tensor(label, dtype=torch.float, device=device)
+
+    def _resolve_biggan_weights(self):
+        if self._biggan_weights_path is not None:
+            return self._biggan_weights_path
+        if not hasattr(self.cfg, "generator"):
+            return None
+        use_pretrained = bool(
+            getattr(self.cfg.generator, "pretrained", False) or getattr(self.cfg.generator, "network_wts", None)
+        )
+        if not use_pretrained:
+            return None
+        model_name = biggan_model_name_for_output_dim(self.bigganconfig.output_dim)
+        if model_name is None:
+            log.info("No pretrained BigGAN available for output_dim=%s.", self.bigganconfig.output_dim)
+            return None
+        if self.bigganconfig.num_classes != 1000:
+            log.info(
+                "Skipping pretrained BigGAN weights for num_classes=%s (expected 1000).",
+                self.bigganconfig.num_classes,
+            )
+            return None
+        requested_path = getattr(self.cfg.generator, "network_wts", None)
+        weights_path = resolve_pretrained_biggan_weights(model_name, requested_path=requested_path)
+        if not weights_path:
+            return None
+        self.cfg.generator.network_wts = weights_path
+        self._biggan_weights_path = weights_path
+        return weights_path
+
+    def _canonicalize_github_raw(self, url):
+        if "github.com" in url and "/blob/" in url:
+            return url.replace("github.com", "raw.githubusercontent.com").replace("/blob/", "/")
+        return url
+
+    def _resolve_dcgan_weights(self):
+        if not hasattr(self.cfg, "generator"):
+            return None
+        if self.cfg.generator.type != "dcgan":
+            return None
+        requested_path = getattr(self.cfg.generator, "network_wts", None)
+        if requested_path and os.path.exists(requested_path):
+            return requested_path
+
+        default_url = (
+            "https://github.com/csinva/gan-vae-pretrained-pytorch/blob/master/"
+            "cifar10_dcgan/weights/netG_epoch_199.pth"
+        )
+        download_url = self._canonicalize_github_raw(requested_path or default_url)
+        package_root = Path(__file__).resolve().parents[1]
+        target_dir = package_root / "pretrained" / "DCGAN"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_path = target_dir / os.path.basename(download_url)
+
+        if not target_path.exists():
+            log.info("Downloading DCGAN weights from %s to %s", download_url, target_path)
+            torch.hub.download_url_to_file(download_url, str(target_path))
+
+        self.cfg.generator.network_wts = str(target_path)
+        return str(target_path)
 
     def _generate_candidate(self, netG, noise, labels):
         if self.cfg.generator.type == "biggan":
@@ -225,6 +293,12 @@ class GenImagePriorAttacker(OptimizationBasedAttacker):
         # so we can directly use the architecture and randomly initialized weights for the attack
         if self.cfg.generator.type == "biggan":
             self.netG = BigGAN(self.bigganconfig).to(self.setup["device"])
+            weights_path = self._resolve_biggan_weights()
+            if weights_path:
+                if self._biggan_state_dict is None:
+                    self._biggan_state_dict = torch.load(weights_path, map_location="cpu")
+                self.netG.load_state_dict(self._biggan_state_dict, strict=False)
+                log.info(f"Loaded BigGAN weights from {weights_path}")
             # Define noise
             self.noise = truncated_noise_sample(batch_size=self.batch_size, 
                                             dim_z=self.netG.config.z_dim, 
@@ -243,7 +317,10 @@ class GenImagePriorAttacker(OptimizationBasedAttacker):
                                             truncation=self.truncation)
         elif self.cfg.generator.type == "dcgan":
             self.netG = DCGANGenerator(nz=self.cfg.generator.z_dim, ngf=self.cfg.generator.ngf, nc=self.cfg.generator.nc).to(self.setup["device"])
-            state = torch.load(self.cfg.generator.network_wts, map_location=self.setup["device"])
+            weights_path = self._resolve_dcgan_weights()
+            if not weights_path:
+                raise ValueError("DCGAN weights are required but could not be resolved.")
+            state = torch.load(weights_path, map_location=self.setup["device"])
             # state = _unwrap_state_dict(state)
             # _load_state_dict_forgiving(self.netG, state)
             self.netG.load_state_dict(state)
@@ -423,6 +500,12 @@ class GenImagePriorAttacker(OptimizationBasedAttacker):
         for _ in range(num_trials):
             if self.cfg.generator.type == "biggan":
                 netG = BigGAN(self.bigganconfig).to(self.setup["device"])
+                weights_path = self._resolve_biggan_weights()
+                if weights_path:
+                    if self._biggan_state_dict is None:
+                        self._biggan_state_dict = torch.load(weights_path, map_location="cpu")
+                    netG.load_state_dict(self._biggan_state_dict, strict=False)
+                    log.info(f"Loaded BigGAN weights from {weights_path}")
                 noise = truncated_noise_sample(
                     batch_size=self.batch_size, dim_z=netG.config.z_dim, truncation=self.truncation
                 )
@@ -439,7 +522,10 @@ class GenImagePriorAttacker(OptimizationBasedAttacker):
                 netG = DCGANGenerator(
                     nz=self.cfg.generator.z_dim, ngf=self.cfg.generator.ngf, nc=self.cfg.generator.nc
                 ).to(self.setup["device"])
-                state = torch.load(self.cfg.generator.network_wts, map_location=self.setup["device"])
+                weights_path = self._resolve_dcgan_weights()
+                if not weights_path:
+                    raise ValueError("DCGAN weights are required but could not be resolved.")
+                state = torch.load(weights_path, map_location=self.setup["device"])
                 netG.load_state_dict(state)
                 noise = torch.randn(self.batch_size, self.cfg.generator.z_dim, 1, 1, device=self.setup["device"])
             else:

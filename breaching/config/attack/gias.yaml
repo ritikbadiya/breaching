@@ -19,7 +19,7 @@ generator:
   # type: styleganxl
   # network_wts: "${hydra:runtime.cwd}/breaching/pretrained/StyleGANXL/cifar10.pkl"
   # type: biggan
-  # network_wts: "${hydra:runtime.cwd}/breaching/pretrained/BigGAN/pytorch_model.bin"
+  # network_wts: "${hydra:runtime.cwd}/breaching/pretrained/BigGAN/biggan-deep-256-pytorch_model.bin"
   # type: stylegan2
   # network_wts: "${hydra:runtime.cwd}/breaching/pretrained/StyleGAN2/cifar10.pkl"
 
