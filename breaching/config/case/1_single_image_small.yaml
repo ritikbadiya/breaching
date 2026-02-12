@@ -8,6 +8,23 @@ defaults:
   - _self_
 model: vit_custom
 
+# Optional ViT PEFT configuration.
+# peft:
+#   enabled: true
+#   type: vpt  # choices: vpt, lora
+#   vpt:
+#     num_tokens: 8
+#     dropout: 0.0
+#     project: -1
+#     deep: false
+#     num_deep_layers:
+#     prompt_mlp_layers: 0
+#   lora:
+#     rank: 8
+#     alpha: 16
+#     dropout: 0.0
+#     target_modules: [q, k, v, mlp]
+
 user:
   provide_labels: False
   num_data_points: 1

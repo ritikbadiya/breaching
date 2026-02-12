@@ -5,6 +5,7 @@ import copy
 from itertools import chain
 
 from .data import construct_dataloader
+from .models.parameter_utils import shared_parameters as model_shared_parameters
 import logging
 
 log = logging.getLogger(__name__)
@@ -53,6 +54,9 @@ class UserSingleStep(torch.nn.Module):
         self.loss = copy.deepcopy(loss)  # Just in case the loss contains state
 
         self.counted_queries = 0  # Count queries to this user
+
+    def _shared_parameters(self):
+        return model_shared_parameters(self.model)
 
     def __repr__(self):
         n = "\n"
@@ -128,9 +132,10 @@ class UserSingleStep(torch.nn.Module):
 
         parameters = server_payload["parameters"]
         buffers = server_payload["buffers"]
+        shared_params = self._shared_parameters()
 
         with torch.no_grad():
-            for param, server_state in zip(self.model.parameters(), parameters):
+            for param, server_state in zip(shared_params, parameters):
                 param.copy_(server_state.to(**self.setup))
             if buffers is not None:
                 for buffer, server_state in zip(self.model.buffers(), buffers):
@@ -153,10 +158,10 @@ class UserSingleStep(torch.nn.Module):
             )
             outputs = self.model(**data)
             loss = self.loss(outputs, data["labels"])
-            return torch.autograd.grad(loss, self.model.parameters())
+            return torch.autograd.grad(loss, shared_params)
 
         if self.clip_value > 0:  # Compute per-example gradients and clip them in this case
-            shared_grads = [torch.zeros_like(p) for p in self.model.parameters()]
+            shared_grads = [torch.zeros_like(p) for p in shared_params]
             for data_idx in range(B):
                 data_point = {key: val[data_idx : data_idx + 1] for key, val in data.items()}
                 per_example_grads = _compute_batch_gradient(data_point)
@@ -342,9 +347,10 @@ class UserMultiStep(UserSingleStep):
         # Compute local updates
         parameters = server_payload["parameters"]
         buffers = server_payload["buffers"]
+        shared_params = self._shared_parameters()
 
         with torch.no_grad():
-            for param, server_state in zip(self.model.parameters(), parameters):
+            for param, server_state in zip(shared_params, parameters):
                 param.copy_(server_state.to(**self.setup))
             if buffers is not None:
                 for buffer, server_state in zip(self.model.buffers(), buffers):
@@ -356,7 +362,7 @@ class UserMultiStep(UserSingleStep):
             f"Computing user update on user {self.user_idx} in model mode: {'training' if self.model.training else 'eval'}."
         )
 
-        optimizer = torch.optim.SGD(self.model.parameters(), lr=self.local_learning_rate)
+        optimizer = torch.optim.SGD(shared_params, lr=self.local_learning_rate)
         seen_data_idx = 0
         label_list = []
         for step in range(self.num_local_updates):
@@ -378,7 +384,7 @@ class UserMultiStep(UserSingleStep):
             loss = self.loss(outputs, data["labels"])
             loss.backward()
 
-            grads_ref = [p.grad for p in self.model.parameters()]
+            grads_ref = [p.grad for p in shared_params]
             if self.clip_value > 0:
                 self._clip_list_of_grad_(grads_ref)
             self._apply_differential_noise(grads_ref)
@@ -389,7 +395,7 @@ class UserMultiStep(UserSingleStep):
         # with the gradients sent in UserSingleStep
         shared_grads = [
             (p_local - p_server.to(**self.setup)).clone().detach()
-            for (p_local, p_server) in zip(self.model.parameters(), parameters)
+            for (p_local, p_server) in zip(shared_params, parameters)
         ]
 
         shared_buffers = [b.clone().detach() for b in self.model.buffers()]

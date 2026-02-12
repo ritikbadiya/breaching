@@ -1,7 +1,10 @@
 """Helper code to instantiate various models."""
 
+import math
+import logging
 import torch
 import torchvision
+import torch.nn as nn
 
 from collections import OrderedDict
 
@@ -13,6 +16,415 @@ from .vgg import VGG
 from .language_models import RNNModel, TransformerModel, LinearModel
 from .losses import CausalLoss, MLMLoss, MostlyCausalLoss
 
+log = logging.getLogger(__name__)
+
+
+def _cfg_get(cfg, key, default=None):
+    if cfg is None:
+        return default
+    if isinstance(cfg, dict):
+        return cfg.get(key, default)
+    if hasattr(cfg, key):
+        return getattr(cfg, key)
+    try:
+        return cfg[key]
+    except (KeyError, TypeError):
+        return default
+
+
+def _model_name(cfg_model):
+    if isinstance(cfg_model, str):
+        return cfg_model
+    name = _cfg_get(cfg_model, "name", None)
+    if name is None:
+        raise ValueError("Model config must provide a model name.")
+    return name
+
+
+class LoRALinear(nn.Module):
+    """LoRA wrapper for a linear layer."""
+
+    def __init__(self, base_layer, rank=4, alpha=1.0, dropout=0.0):
+        super().__init__()
+        if not isinstance(base_layer, nn.Linear):
+            raise TypeError("LoRALinear expects a torch.nn.Linear layer.")
+        if rank <= 0:
+            raise ValueError("LoRA rank must be positive.")
+
+        self.base_layer = base_layer
+        self.rank = int(rank)
+        self.scaling = float(alpha) / float(rank)
+        self.dropout = nn.Dropout(float(dropout)) if dropout and dropout > 0 else nn.Identity()
+
+        in_features = base_layer.in_features
+        out_features = base_layer.out_features
+        self.lora_A = nn.Parameter(torch.zeros(self.rank, in_features))
+        self.lora_B = nn.Parameter(torch.zeros(out_features, self.rank))
+        nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
+        nn.init.zeros_(self.lora_B)
+
+    def forward(self, x):
+        out = self.base_layer(x)
+        delta = (self.dropout(x) @ self.lora_A.t()) @ self.lora_B.t()
+        return out + delta * self.scaling
+
+    def shared_parameters(self):
+        return [self.lora_A, self.lora_B]
+
+
+class LoRAQKVLinear(nn.Module):
+    """LoRA wrapper for fused qkv linear layers in timm ViT blocks."""
+
+    def __init__(self, base_layer, rank=4, alpha=1.0, dropout=0.0, apply_q=True, apply_k=True, apply_v=True):
+        super().__init__()
+        if not isinstance(base_layer, nn.Linear):
+            raise TypeError("LoRAQKVLinear expects a torch.nn.Linear layer.")
+        if rank <= 0:
+            raise ValueError("LoRA rank must be positive.")
+        if base_layer.out_features % 3 != 0:
+            raise ValueError("Fused qkv layer must have out_features divisible by 3.")
+
+        self.base_layer = base_layer
+        self.rank = int(rank)
+        self.scaling = float(alpha) / float(rank)
+        self.dropout = nn.Dropout(float(dropout)) if dropout and dropout > 0 else nn.Identity()
+        self.chunk = base_layer.out_features // 3
+        self.has_any_adapter = bool(apply_q or apply_k or apply_v)
+
+        def make_pair(enabled):
+            if not enabled:
+                return None, None
+            A = nn.Parameter(torch.zeros(self.rank, base_layer.in_features))
+            B = nn.Parameter(torch.zeros(self.chunk, self.rank))
+            nn.init.kaiming_uniform_(A, a=math.sqrt(5))
+            nn.init.zeros_(B)
+            return A, B
+
+        self.lora_A_q, self.lora_B_q = make_pair(apply_q)
+        self.lora_A_k, self.lora_B_k = make_pair(apply_k)
+        self.lora_A_v, self.lora_B_v = make_pair(apply_v)
+
+    def _delta(self, x, A, B):
+        if A is None or B is None:
+            return None
+        return ((self.dropout(x) @ A.t()) @ B.t()) * self.scaling
+
+    def forward(self, x):
+        out = self.base_layer(x)
+        if not self.has_any_adapter:
+            return out
+        chunks = list(out.split(self.chunk, dim=-1))
+        delta_q = self._delta(x, self.lora_A_q, self.lora_B_q)
+        delta_k = self._delta(x, self.lora_A_k, self.lora_B_k)
+        delta_v = self._delta(x, self.lora_A_v, self.lora_B_v)
+        if delta_q is not None:
+            chunks[0] = chunks[0] + delta_q
+        if delta_k is not None:
+            chunks[1] = chunks[1] + delta_k
+        if delta_v is not None:
+            chunks[2] = chunks[2] + delta_v
+        return torch.cat(chunks, dim=-1)
+
+    def shared_parameters(self):
+        params = []
+        for p in [self.lora_A_q, self.lora_B_q, self.lora_A_k, self.lora_B_k, self.lora_A_v, self.lora_B_v]:
+            if p is not None:
+                params.append(p)
+        return params
+
+
+class TimmLoRAAdapter(nn.Module):
+    """Wrapper around a ViT model patched with LoRA modules."""
+
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def forward(self, x):
+        return self.model(x)
+
+    def shared_parameters(self):
+        return [p for p in self.model.parameters() if p.requires_grad]
+
+
+class TimmVPTAdapter(nn.Module):
+    """Visual Prompt Tuning wrapper for timm ViT models."""
+
+    def __init__(
+        self,
+        base_model,
+        num_tokens=5,
+        prompt_dropout=0.0,
+        prompt_proj_dim=-1,
+        deep=False,
+        num_deep_layers=None,
+        prompt_mlp_layers=0,
+    ):
+        super().__init__()
+        self.base_model = base_model
+        self.num_tokens = int(num_tokens)
+        self.deep = bool(deep)
+        self.num_prefix_tokens = int(getattr(base_model, "num_prefix_tokens", 1))
+
+        for p in self.base_model.parameters():
+            p.requires_grad = False
+
+        embed_dim = int(getattr(base_model, "embed_dim", getattr(base_model, "num_features")))
+        prompt_dim = int(prompt_proj_dim) if prompt_proj_dim is not None and int(prompt_proj_dim) > 0 else embed_dim
+
+        patch_size = getattr(getattr(base_model, "patch_embed", None), "patch_size", (16, 16))
+        if isinstance(patch_size, int):
+            patch_area = patch_size * patch_size
+        else:
+            patch_area = int(patch_size[0]) * int(patch_size[1])
+        val = math.sqrt(6.0 / float(3 * patch_area + prompt_dim))
+
+        self.prompt_embeddings = nn.Parameter(torch.zeros(1, self.num_tokens, prompt_dim))
+        nn.init.uniform_(self.prompt_embeddings, -val, val)
+
+        self.prompt_proj = nn.Linear(prompt_dim, embed_dim) if prompt_dim != embed_dim else nn.Identity()
+
+        mlp_layers = []
+        for _ in range(int(prompt_mlp_layers)):
+            mlp_layers.append(nn.Linear(embed_dim, embed_dim))
+            mlp_layers.append(nn.GELU())
+        self.prompt_mlp = nn.Sequential(*mlp_layers) if mlp_layers else nn.Identity()
+        self.prompt_dropout = nn.Dropout(float(prompt_dropout)) if prompt_dropout and prompt_dropout > 0 else nn.Identity()
+
+        if self.deep:
+            total_layers = len(self.base_model.blocks) - 1
+            self.num_deep_layers = int(num_deep_layers) if num_deep_layers is not None else total_layers
+            self.num_deep_layers = max(0, min(self.num_deep_layers, total_layers))
+            self.deep_prompt_embeddings = nn.Parameter(torch.zeros(self.num_deep_layers, self.num_tokens, prompt_dim))
+            nn.init.uniform_(self.deep_prompt_embeddings, -val, val)
+        else:
+            self.deep_prompt_embeddings = None
+
+    def _transform_prompt(self, prompt_emb):
+        prompt = self.prompt_proj(prompt_emb)
+        prompt = self.prompt_mlp(prompt)
+        prompt = self.prompt_dropout(prompt)
+        return prompt
+
+    def _insert_prompts(self, x, prompt_tokens):
+        return torch.cat(
+            [
+                x[:, : self.num_prefix_tokens, :],
+                prompt_tokens,
+                x[:, self.num_prefix_tokens :, :],
+            ],
+            dim=1,
+        )
+
+    def _strip_prompts(self, x):
+        return torch.cat(
+            [
+                x[:, : self.num_prefix_tokens, :],
+                x[:, self.num_prefix_tokens + self.num_tokens :, :],
+            ],
+            dim=1,
+        )
+
+    def _pos_embed(self, x):
+        if hasattr(self.base_model, "_pos_embed"):
+            return self.base_model._pos_embed(x)
+
+        B = x.shape[0]
+        prefix = []
+        if hasattr(self.base_model, "cls_token") and self.base_model.cls_token is not None:
+            prefix.append(self.base_model.cls_token.expand(B, -1, -1))
+        if hasattr(self.base_model, "reg_token") and self.base_model.reg_token is not None:
+            prefix.append(self.base_model.reg_token.expand(B, -1, -1))
+        if len(prefix) > 0:
+            x = torch.cat([*prefix, x], dim=1)
+        if hasattr(self.base_model, "pos_embed") and self.base_model.pos_embed is not None:
+            if self.base_model.pos_embed.shape[1] == x.shape[1]:
+                x = x + self.base_model.pos_embed
+        if hasattr(self.base_model, "pos_drop"):
+            x = self.base_model.pos_drop(x)
+        return x
+
+    def _forward_features(self, x):
+        x = self.base_model.patch_embed(x)
+        x = self._pos_embed(x)
+
+        if hasattr(self.base_model, "patch_drop"):
+            x = self.base_model.patch_drop(x)
+        if hasattr(self.base_model, "norm_pre"):
+            x = self.base_model.norm_pre(x)
+
+        B = x.shape[0]
+        shallow_prompt = self._transform_prompt(self.prompt_embeddings).expand(B, -1, -1)
+        x = self._insert_prompts(x, shallow_prompt)
+
+        for idx, block in enumerate(self.base_model.blocks):
+            if self.deep_prompt_embeddings is not None and idx > 0 and (idx - 1) < self.deep_prompt_embeddings.shape[0]:
+                deep_prompt = self._transform_prompt(self.deep_prompt_embeddings[idx - 1]).expand(B, -1, -1)
+                x = self._insert_prompts(self._strip_prompts(x), deep_prompt)
+            x = block(x)
+
+        x = self._strip_prompts(x)
+        if hasattr(self.base_model, "norm"):
+            x = self.base_model.norm(x)
+        return x
+
+    def forward(self, x):
+        x = self._forward_features(x)
+        if hasattr(self.base_model, "forward_head"):
+            return self.base_model.forward_head(x)
+        if x.ndim == 3:
+            if getattr(self.base_model, "global_pool", "") == "avg":
+                x = x[:, self.num_prefix_tokens :, :].mean(dim=1)
+            else:
+                x = x[:, 0]
+        if hasattr(self.base_model, "fc_norm") and self.base_model.fc_norm is not None:
+            x = self.base_model.fc_norm(x)
+        if hasattr(self.base_model, "head_drop"):
+            x = self.base_model.head_drop(x)
+        if hasattr(self.base_model, "head"):
+            x = self.base_model.head(x)
+        return x
+
+    def shared_parameters(self):
+        params = [self.prompt_embeddings]
+        params += list(self.prompt_proj.parameters()) if isinstance(self.prompt_proj, nn.Module) else []
+        params += list(self.prompt_mlp.parameters()) if isinstance(self.prompt_mlp, nn.Module) else []
+        if self.deep_prompt_embeddings is not None:
+            params.append(self.deep_prompt_embeddings)
+        return params
+
+
+def _is_vit_backbone(model):
+    return hasattr(model, "patch_embed") and hasattr(model, "blocks") and hasattr(model, "forward")
+
+
+def _find_vit_backbone(model):
+    if _is_vit_backbone(model):
+        return model, None
+    if hasattr(model, "model") and _is_vit_backbone(model.model):
+        return model.model, model
+    return None, None
+
+
+def _parse_peft_cfg(cfg_model, kwargs):
+    peft_cfg = _cfg_get(cfg_model, "peft", None) if not isinstance(cfg_model, str) else None
+    if peft_cfg is None and "cfg_case" in kwargs:
+        peft_cfg = _cfg_get(kwargs["cfg_case"], "peft", None)
+    return peft_cfg
+
+
+def _replace_linear_with_lora(module_parent, attr_name, rank, alpha, dropout):
+    old_layer = getattr(module_parent, attr_name, None)
+    if isinstance(old_layer, nn.Linear):
+        setattr(module_parent, attr_name, LoRALinear(old_layer, rank=rank, alpha=alpha, dropout=dropout))
+        return 1
+    return 0
+
+
+def _apply_lora_to_vit(backbone, peft_cfg):
+    lora_cfg = _cfg_get(peft_cfg, "lora", peft_cfg)
+    rank = int(_cfg_get(lora_cfg, "rank", 4))
+    alpha = float(_cfg_get(lora_cfg, "alpha", rank))
+    dropout = float(_cfg_get(lora_cfg, "dropout", 0.0))
+    targets = _cfg_get(lora_cfg, "target_modules", _cfg_get(lora_cfg, "targets", ["q", "k", "v"]))
+    if isinstance(targets, str):
+        targets = [target.strip() for target in targets.split(",")]
+    target_set = {target.lower() for target in targets}
+
+    for p in backbone.parameters():
+        p.requires_grad = False
+
+    adapters = 0
+    for block in backbone.blocks:
+        attn = getattr(block, "attn", None)
+        if attn is not None:
+            if hasattr(attn, "qkv") and isinstance(attn.qkv, nn.Linear):
+                qkv_layer = LoRAQKVLinear(
+                    attn.qkv,
+                    rank=rank,
+                    alpha=alpha,
+                    dropout=dropout,
+                    apply_q=("q" in target_set),
+                    apply_k=("k" in target_set),
+                    apply_v=("v" in target_set),
+                )
+                if qkv_layer.has_any_adapter:
+                    attn.qkv = qkv_layer
+                    adapters += 1
+            else:
+                if "q" in target_set:
+                    adapters += _replace_linear_with_lora(attn, "q_proj", rank, alpha, dropout)
+                if "k" in target_set:
+                    adapters += _replace_linear_with_lora(attn, "k_proj", rank, alpha, dropout)
+                if "v" in target_set:
+                    adapters += _replace_linear_with_lora(attn, "v_proj", rank, alpha, dropout)
+
+            if "proj" in target_set:
+                adapters += _replace_linear_with_lora(attn, "proj", rank, alpha, dropout)
+
+        if "mlp" in target_set:
+            mlp = getattr(block, "mlp", None)
+            if mlp is not None:
+                adapters += _replace_linear_with_lora(mlp, "fc1", rank, alpha, dropout)
+                adapters += _replace_linear_with_lora(mlp, "fc2", rank, alpha, dropout)
+
+    if adapters == 0:
+        log.warning("LoRA PEFT requested but no target layers were patched.")
+    return TimmLoRAAdapter(backbone)
+
+
+def _apply_vpt_to_vit(backbone, peft_cfg):
+    vpt_cfg = _cfg_get(peft_cfg, "vpt", peft_cfg)
+    return TimmVPTAdapter(
+        backbone,
+        num_tokens=int(_cfg_get(vpt_cfg, "num_tokens", 5)),
+        prompt_dropout=float(_cfg_get(vpt_cfg, "dropout", 0.0)),
+        prompt_proj_dim=int(_cfg_get(vpt_cfg, "project", -1)),
+        deep=bool(_cfg_get(vpt_cfg, "deep", False)),
+        num_deep_layers=_cfg_get(vpt_cfg, "num_deep_layers", None),
+        prompt_mlp_layers=int(_cfg_get(vpt_cfg, "prompt_mlp_layers", _cfg_get(vpt_cfg, "prompt_mlp_num", 0))),
+    )
+
+
+def _adapt_model_with_peft(model, cfg_model, modality="vision", **kwargs):
+    if modality != "vision":
+        return model
+    model_name = _model_name(cfg_model).lower()
+    if "vit" not in model_name:
+        return model
+
+    peft_cfg = _parse_peft_cfg(cfg_model, kwargs)
+    if peft_cfg is None or not bool(_cfg_get(peft_cfg, "enabled", True)):
+        return model
+
+    peft_type = _cfg_get(peft_cfg, "type", None)
+    if peft_type is None:
+        if _cfg_get(peft_cfg, "vpt", None) is not None:
+            peft_type = "vpt"
+        elif _cfg_get(peft_cfg, "lora", None) is not None:
+            peft_type = "lora"
+    if peft_type is None:
+        raise ValueError("PEFT config requires `type` to be one of `vpt` or `lora`.")
+
+    backbone, parent = _find_vit_backbone(model)
+    if backbone is None:
+        log.warning("PEFT requested for %s but no compatible ViT backbone was found.", model_name)
+        return model
+
+    peft_type = str(peft_type).lower()
+    log.info("Applying %s PEFT adaptation to ViT model %s.", peft_type, model_name)
+    if peft_type == "vpt":
+        adapted_backbone = _apply_vpt_to_vit(backbone, peft_cfg)
+    elif peft_type == "lora":
+        adapted_backbone = _apply_lora_to_vit(backbone, peft_cfg)
+    else:
+        raise ValueError(f"Unknown PEFT type {peft_type}.")
+
+    if parent is None:
+        return adapted_backbone
+    parent.model = adapted_backbone
+    return model
+
 
 def construct_model(cfg_model, cfg_data, pretrained=True, **kwargs):
     if cfg_data.modality == "vision":
@@ -22,7 +434,7 @@ def construct_model(cfg_model, cfg_data, pretrained=True, **kwargs):
     else:
         raise ValueError(f"Invalid data modality {cfg_data.modality}")
     # Save nametag for printouts later:
-    model.name = cfg_model
+    model.name = _model_name(cfg_model)
 
     # Choose loss function according to data and model:
     if "classification" in cfg_data.task:
@@ -40,6 +452,8 @@ def construct_model(cfg_model, cfg_data, pretrained=True, **kwargs):
 
 
 def _construct_text_model(cfg_model, cfg_data, pretrained=True, **kwargs):
+    raw_cfg_model = cfg_model
+    cfg_model = _model_name(cfg_model)
     if cfg_model == "transformer3f":
         # This is the transformer from "A field guide to federated learning"
         """
@@ -128,7 +542,7 @@ def _construct_text_model(cfg_model, cfg_data, pretrained=True, **kwargs):
             model = HuggingFaceContainer(model)
         except OSError as error_msg:
             raise ValueError(f"Invalid huggingface model {cfg_model} given: {error_msg}")
-    return model
+    return _adapt_model_with_peft(model, raw_cfg_model, modality="text", **kwargs)
 
 
 class HuggingFaceContainer(torch.nn.Module):
@@ -148,6 +562,9 @@ class HuggingFaceContainer(torch.nn.Module):
         outputs = self.model(**kwargs)
         return outputs["logits"] if "logits" in outputs else outputs["prediction_logits"]
 
+    def shared_parameters(self):
+        return self.model.parameters()
+
 
 class VisionContainer(torch.nn.Module):
     """We'll use a container to catch extra attributes and allow for usage with model(**data)."""
@@ -159,9 +576,16 @@ class VisionContainer(torch.nn.Module):
     def forward(self, inputs, **kwargs):
         return self.model(inputs)
 
+    def shared_parameters(self):
+        if hasattr(self.model, "shared_parameters"):
+            return self.model.shared_parameters()
+        return self.model.parameters()
+
 
 def _construct_vision_model(cfg_model, cfg_data, pretrained=True, **kwargs):
     """Construct the neural net that is used."""
+    raw_cfg_model = cfg_model
+    cfg_model = _model_name(cfg_model)
     channels = cfg_data.shape[0]
     classes = cfg_data.classes
 
@@ -432,6 +856,7 @@ def _construct_vision_model(cfg_model, cfg_data, pretrained=True, **kwargs):
         else:
             raise ValueError("Model could not be found.")
 
+    model = _adapt_model_with_peft(model, raw_cfg_model, modality="vision", **kwargs)
     return VisionContainer(model)
 
 
@@ -586,3 +1011,8 @@ class SmallViT(torch.nn.Module):
 
     def forward(self, x):
         return self.model(x)
+
+    def shared_parameters(self):
+        if hasattr(self.model, "shared_parameters"):
+            return self.model.shared_parameters()
+        return self.model.parameters()

@@ -50,10 +50,13 @@ class GradientLoss(torch.nn.Module):
     def _grad_fn_single_step(self, model, candidate, labels):
         """Compute a single gradient."""
         model.zero_grad()
+        params = [p for p in model.parameters() if p.requires_grad]
+        if len(params) == 0:
+            params = list(model.parameters())
         with torch.autocast(candidate.device.type, enabled=self.cfg_impl.mixed_precision):
             with sdpa_kernel([SDPBackend.MATH]):
                 task_loss = self.loss_fn(model(candidate), labels)
-        gradient = torch.autograd.grad(task_loss, model.parameters(), create_graph=True)
+        gradient = torch.autograd.grad(task_loss, params, create_graph=True)
         return gradient, task_loss
 
     def _grad_fn_multi_step(self, model, candidate, labels):
@@ -61,6 +64,10 @@ class GradientLoss(torch.nn.Module):
         model.zero_grad()
         func_model, params, buffers = make_functional_with_buffers(model)
         initial_params = [p.clone() for p in params]
+        trainable_indices = [idx for idx, p in enumerate(model.parameters()) if p.requires_grad]
+        if len(trainable_indices) == 0:
+            trainable_indices = list(range(len(initial_params)))
+        trainable_idx_set = set(trainable_indices)
 
         seen_data_idx = 0
         for i in range(self.local_hyperparams["steps"]):
@@ -75,10 +82,13 @@ class GradientLoss(torch.nn.Module):
             step_gradient = torch.autograd.grad(task_loss, params, create_graph=True)
 
             # Update parameters in graph:
-            params = [param - self.local_hyperparams["lr"] * grad for param, grad in zip(params, step_gradient)]
+            params = [
+                (param - self.local_hyperparams["lr"] * grad) if idx in trainable_idx_set else param
+                for idx, (param, grad) in enumerate(zip(params, step_gradient))
+            ]
 
         # Finally return differentiable difference in state:
-        gradient = [p_local - p_server for p_local, p_server in zip(params, initial_params)]
+        gradient = [params[idx] - initial_params[idx] for idx in trainable_indices]
 
         # Return last loss as the "best" task loss
         return gradient, task_loss

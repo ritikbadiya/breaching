@@ -8,6 +8,7 @@ import copy
 
 from .auxiliaries.common import optimizer_lookup
 from ..cases.models.transformer_dictionary import lookup_grad_indices
+from ..cases.models.parameter_utils import shared_parameters as model_shared_parameters
 
 import logging
 
@@ -207,7 +208,7 @@ class _BaseAttacker:
                 buffers = []
 
             with torch.no_grad():
-                for param, server_state in zip(new_model.parameters(), parameters):
+                for param, server_state in zip(model_shared_parameters(new_model), parameters):
                     param.copy_(server_state.to(**self.setup))
                 for buffer, server_state in zip(new_model.buffers(), buffers):
                     buffer.copy_(server_state.to(**self.setup))

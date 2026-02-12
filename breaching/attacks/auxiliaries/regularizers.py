@@ -256,7 +256,10 @@ class LinearLayerRegularization(torch.nn.Module):
                 if isinstance(module, torch.nn.Linear):
                     linear_layers.append(name)
                     self.refs[idx].append(_LinearFeatureHook(module))
-            named_grads = {name: g for (g, (name, param)) in zip(user_data["gradients"], model.named_parameters())}
+            trainable_named_params = [(name, param) for name, param in model.named_parameters() if param.requires_grad]
+            if len(trainable_named_params) == 0:
+                trainable_named_params = list(model.named_parameters())
+            named_grads = {name: g for (g, (name, param)) in zip(user_data["gradients"], trainable_named_params)}
 
             # 2) Check features
             features = []
