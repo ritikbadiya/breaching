@@ -46,4 +46,5 @@ regularization:
   l2_regularization:
     scale: 1e-4
   group_regularization:
+    parallel: true
     scale: 1e-4

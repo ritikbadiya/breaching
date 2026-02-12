@@ -54,7 +54,7 @@ regularization:
     inner_exp: 1
     outer_exp: 1
   # group_lazy_regularization:
+  #   parallel: true
   #   scale: 1e-4
   # image_prior:
   #   scale: 0.0
-
