@@ -13,7 +13,12 @@ from .optimization_based_attack import OptimizationBasedAttacker
 from .auxiliaries.objectives import Euclidean, CosineSimilarity, objective_lookup
 from .auxiliaries.augmentations import augmentation_lookup
 
-from .auxiliaries.BigGAN.model import BigGAN, Generator
+from .auxiliaries.BigGAN.model import (
+    BigGAN,
+    Generator,
+    biggan_model_name_for_output_dim,
+    resolve_pretrained_biggan_weights,
+)
 from .auxiliaries.BigGAN.config import BigGANConfig, BigGAN32, BigGAN128, BigGAN256, BigGAN512
 from .auxiliaries.BigGAN.utils import truncated_noise_sample, save_as_images, one_hot_from_names, one_hot_from_int
 
@@ -103,12 +108,42 @@ class GenerativeStyleMigrationAttacker(OptimizationBasedAttacker):
                                         posembed_scale=self.cfg.objective.posembed_scale)
             
         self.truncation = self.cfg.objective.truncation if hasattr(self.cfg.objective, 'truncation') else 0.4
+        self._biggan_weights_path = None
+        self._biggan_state_dict = None
     
     def _make_cond_label(self, labels, device, c_dim):
         if c_dim == 0:
             return torch.zeros([self.batch_size, 0], device=device)
         label = one_hot_from_int(labels, batch_size=self.batch_size, num_classes=self.num_classes)
         return torch.tensor(label, dtype=torch.float, device=device)
+
+    def _resolve_biggan_weights(self):
+        if self._biggan_weights_path is not None:
+            return self._biggan_weights_path
+        if not hasattr(self.cfg, "generator"):
+            return None
+        use_pretrained = bool(
+            getattr(self.cfg.generator, "pretrained", False) or getattr(self.cfg.generator, "network_wts", None)
+        )
+        if not use_pretrained:
+            return None
+        model_name = biggan_model_name_for_output_dim(self.bigganconfig.output_dim)
+        if model_name is None:
+            log.info("No pretrained BigGAN available for output_dim=%s.", self.bigganconfig.output_dim)
+            return None
+        if self.bigganconfig.num_classes != 1000:
+            log.info(
+                "Skipping pretrained BigGAN weights for num_classes=%s (expected 1000).",
+                self.bigganconfig.num_classes,
+            )
+            return None
+        requested_path = getattr(self.cfg.generator, "network_wts", None)
+        weights_path = resolve_pretrained_biggan_weights(model_name, requested_path=requested_path)
+        if not weights_path:
+            return None
+        self.cfg.generator.network_wts = weights_path
+        self._biggan_weights_path = weights_path
+        return weights_path
 
     def _generate_candidate(self, netG, noise, labels):
         if self.cfg.generator.type == "biggan":
@@ -179,6 +214,12 @@ class GenerativeStyleMigrationAttacker(OptimizationBasedAttacker):
         # self.netG = BigGAN(self.bigganconfig).to(self.setup["device"])
         if self.cfg.generator.type == "biggan":
             self.netG = BigGAN(self.bigganconfig).to(self.setup["device"])
+            weights_path = self._resolve_biggan_weights()
+            if weights_path:
+                if self._biggan_state_dict is None:
+                    self._biggan_state_dict = torch.load(weights_path, map_location="cpu")
+                self.netG.load_state_dict(self._biggan_state_dict, strict=False)
+                log.info(f"Loaded BigGAN weights from {weights_path}")
             # Define noise
             self.noise = truncated_noise_sample(batch_size=self.batch_size, 
                                             dim_z=self.netG.config.z_dim, 
@@ -289,6 +330,12 @@ class GenerativeStyleMigrationAttacker(OptimizationBasedAttacker):
         for _ in range(num_trials):
             if self.cfg.generator.type == "biggan":
                 netG = BigGAN(self.bigganconfig).to(self.setup["device"])
+                weights_path = self._resolve_biggan_weights()
+                if weights_path:
+                    if self._biggan_state_dict is None:
+                        self._biggan_state_dict = torch.load(weights_path, map_location="cpu")
+                    netG.load_state_dict(self._biggan_state_dict, strict=False)
+                    log.info(f"Loaded BigGAN weights from {weights_path}")
                 noise = truncated_noise_sample(
                     batch_size=self.batch_size, dim_z=netG.config.z_dim, truncation=self.truncation
                 )
