@@ -69,12 +69,12 @@ ATTACK=invertinggradients
 # -----------------------------------------------------------------------------
 # 1. Define the grid
 # -----------------------------------------------------------------------------
-BATCH_SIZES=(1 4)
+BATCH_SIZES=(1)
 STEP_SIZES=(0.1)
 OBJ_SCALES=(1.0)
 TV_SCALES=(0.1)
 # PATCH_SCALES=(0.1)
-PE_SCALES=(0.001 0.01 0.1 0.5 1.0)
+# PE_SCALES=(0.001 0.01 0.1 0.5 1.0)
 
 # -----------------------------------------------------------------------------
 # 2. Iterate through combinations and submit jobs
@@ -85,9 +85,9 @@ for bs in "${BATCH_SIZES[@]}"; do
     for ss in "${STEP_SIZES[@]}"; do
         for os in "${OBJ_SCALES[@]}"; do
             for tv in "${TV_SCALES[@]}"; do
-                for pes in "${PE_SCALES[@]}"; do
+                # for pes in "${PE_SCALES[@]}"; do
 
-                    JOB_NAME="${ATTACK}_bs${bs}_ss${ss}_os${os}_pes${PE_SCALE}_tv${tv}"
+                    JOB_NAME="${ATTACK}_bs${bs}_ss${ss}_os${os}_tv${tv}"
 
                     echo "Submitting job $count: $JOB_NAME"
 
@@ -101,7 +101,6 @@ for bs in "${BATCH_SIZES[@]}"; do
                         attack=${ATTACK} \
                         attack.optim.step_size=${ss} \
                         attack.objective.scale=${os} \
-                        attack.objective.posembed_scale=${pes} \
                         attack.regularization.total_variation.scale=${tv} \
                         save_reconstruction=true \
                         dryrun=False \
@@ -116,6 +115,8 @@ for bs in "${BATCH_SIZES[@]}"; do
         done
     done
 done
+
+# attack.objective.posembed_scale=${pes} \
 
 echo "Submitted $count jobs in total at $(date)"
 echo "Grid master finished."

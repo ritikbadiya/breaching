@@ -69,12 +69,13 @@ ATTACK=april_optimization
 # -----------------------------------------------------------------------------
 # 1. Define the grid
 # -----------------------------------------------------------------------------
-BATCH_SIZES=(4 8 16 64)
+BATCH_SIZES=(1)
 STEP_SIZES=(0.1)
 OBJ_SCALES=(1.0)
-TV_SCALES=(0.0001 0.001 0.01 0.1 0.2 0.5)
+TV_SCALES=(0.0001 0.001 0.01 0.1 0.2)
 # PATCH_SCALES=(0.1)
-PE_SCALE=0.1
+PE_SCALE=(0.01 0.1 1.0)
+# GR_SCALES=(0.0001 0.001 0.01 0.1 0.2 0.5)
 
 # -----------------------------------------------------------------------------
 # 2. Iterate through combinations and submit jobs
@@ -85,6 +86,7 @@ for bs in "${BATCH_SIZES[@]}"; do
     for ss in "${STEP_SIZES[@]}"; do
         for os in "${OBJ_SCALES[@]}"; do
             for tv in "${TV_SCALES[@]}"; do
+                # for gs in "${GR_SCALES[@]}"; do
                 # for ps in "${PATCH_SCALES[@]}"; do
 
                 JOB_NAME="${ATTACK}_bs${bs}_ss${ss}_os${os}_pes${PE_SCALE}_tv${tv}"
