@@ -32,5 +32,6 @@ regularization:
     inner_exp: 1
     outer_exp: 1
   group_regularization:
+    parallel: true
     scale: 0.0001
     

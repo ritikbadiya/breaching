@@ -54,11 +54,18 @@ class GANGradMatchingAttacker(OptimizationBasedAttacker):
         scores = torch.zeros(self.cfg.restarts.num_trials)
         candidate_solutions = []
         try:
-            for trial in range(self.cfg.restarts.num_trials):
-                candidate_solutions += [
-                    self._run_trial(rec_models, shared_data, labels, stats, trial, initial_data, dryrun)
-                ]
-                scores[trial] = self._score_trial(candidate_solutions[trial], labels, rec_models, shared_data)
+            if not self.parallel_trials:
+                for trial in range(self.cfg.restarts.num_trials):
+                    candidate_solutions += [
+                        self._run_trial(rec_models, shared_data, labels, stats, trial, initial_data, dryrun)
+                    ]
+                    scores[trial] = self._score_trial(candidate_solutions[trial], labels, rec_models, shared_data)
+            else:
+                candidate_solutions = self._run_parallel_trials(
+                    rec_models, shared_data, labels, stats, initial_data, dryrun, self.cfg.restarts.num_trials
+                )
+                for trial in range(self.cfg.restarts.num_trials):
+                    scores[trial] = self._score_trial(candidate_solutions[trial], labels, rec_models, shared_data)
         except KeyboardInterrupt:
             print("Trial procedure manually interruped.")
             pass
@@ -144,6 +151,128 @@ class GANGradMatchingAttacker(OptimizationBasedAttacker):
         self.netG = None  # Free up memory
 
         return best_candidate.detach()
+
+    def _run_parallel_trials(self, rec_model, shared_data, labels, stats, initial_data, dryrun, num_trials):
+        """Run multiple reconstruction trials in parallel for parallel regularizers."""
+        for regularizer in self.regularizers:
+            regularizer.initialize(rec_model, shared_data, labels)
+        self.objective.initialize(self.loss_fn, self.cfg.impl, shared_data[0]["metadata"]["local_hyperparams"])
+
+        self.batch_size = shared_data[0]["metadata"]["num_data_points"]
+        channel = self.over_parameterization(
+            batch_size=self.batch_size, img_res=self.data_shape[-1], channels=self.data_shape[0]
+        )
+        log.info("The channel number is {}".format(channel))
+        log.info("Input shape is {}".format(self.data_shape))
+
+        netGs, noises, optimizers, schedulers = [], [], [], []
+        for _ in range(num_trials):
+            netG = Generator(image_res=self.data_shape[-1], in_channel=channel).to(self.setup["device"])
+            for p in netG.parameters():
+                p.requires_grad = True
+            noise = torch.randn(self.batch_size, 128, device=self.setup["device"])  # nz = 128
+            optimizer, scheduler = self._init_optimizer([p for p in netG.parameters()])
+            netGs.append(netG)
+            noises.append(noise)
+            optimizers.append(optimizer)
+            schedulers.append(scheduler)
+
+        with torch.no_grad():
+            best_candidates = [netG(noise).detach().clone() for netG, noise in zip(netGs, noises)]
+        minimal_values_so_far = torch.as_tensor([float("inf")] * num_trials, **self.setup)
+
+        parallel_regularizers = getattr(self, "parallel_regularizers", [])
+        current_wallclock = time.time()
+        try:
+            for iteration in range(self.cfg.optim.max_iterations):
+                for optimizer in optimizers:
+                    optimizer.zero_grad()
+
+                objective_values, task_losses, candidates = [], [], []
+                for netG, noise in zip(netGs, noises):
+                    candidate = netG(noise)
+                    if self.cfg.differentiable_augmentations:
+                        candidate_augmented = self.augmentations(candidate)
+                    else:
+                        candidate_augmented = candidate
+                        candidate_augmented.data = self.augmentations(candidate.data)
+
+                    total_objective = 0
+                    total_task_loss = 0
+                    for model, data in zip(rec_model, shared_data):
+                        objective, task_loss = self.objective(model, data["gradients"], candidate_augmented, labels)
+                        total_objective += objective
+                        total_task_loss += task_loss
+                    for regularizer in self.regularizers:
+                        total_objective += regularizer(candidate_augmented)
+
+                    objective_values.append(total_objective)
+                    task_losses.append(total_task_loss)
+                    candidates.append(candidate)
+
+                for regularizer in parallel_regularizers:
+                    reg_loss = regularizer(candidates)
+                    for idx, reg in enumerate(reg_loss):
+                        objective_values[idx] = objective_values[idx] + reg
+
+                total_objective = sum(objective_values)
+                if total_objective.requires_grad:
+                    candidate_grads = torch.autograd.grad(total_objective, candidates, create_graph=False)
+                    grad_list = list(candidate_grads)
+                    with torch.no_grad():
+                        for idx, candidate_grad in enumerate(grad_list):
+                            if self.cfg.optim.langevin_noise > 0:
+                                step_size = optimizers[idx].param_groups[0]["lr"]
+                                noise_map = torch.randn_like(candidate_grad)
+                                candidate_grad += self.cfg.optim.langevin_noise * step_size * noise_map
+                            if self.cfg.optim.grad_clip is not None:
+                                grad_norm = candidate_grad.norm()
+                                if grad_norm > self.cfg.optim.grad_clip:
+                                    candidate_grad.mul_(self.cfg.optim.grad_clip / (grad_norm + 1e-6))
+                            if self.cfg.optim.signed is not None:
+                                if self.cfg.optim.signed == "soft":
+                                    scaling_factor = 1 - iteration / self.cfg.optim.max_iterations
+                                    candidate_grad.mul_(scaling_factor).tanh_().div_(scaling_factor)
+                                elif self.cfg.optim.signed == "hard":
+                                    candidate_grad.sign_()
+                    torch.autograd.backward(candidates, grad_list)
+
+                for optimizer, scheduler in zip(optimizers, schedulers):
+                    optimizer.step()
+                    scheduler.step()
+
+                with torch.no_grad():
+                    for idx, candidate in enumerate(candidates):
+                        if self.cfg.optim.boxed:
+                            candidate.data = torch.max(torch.min(candidate, (1 - self.dm) / self.ds), -self.dm / self.ds)
+                        if objective_values[idx] < minimal_values_so_far[idx]:
+                            minimal_values_so_far[idx] = objective_values[idx].detach()
+                            best_candidates[idx] = candidate.detach().clone()
+
+                if iteration + 1 == self.cfg.optim.max_iterations or iteration % self.cfg.optim.callback == 0:
+                    timestamp = time.time()
+                    for idx, (objective_value, task_loss) in enumerate(zip(objective_values, task_losses)):
+                        log.info(
+                            f"| Trial: {idx} | It: {iteration + 1} | Rec. loss: {objective_value.item():2.4f} | "
+                            f" Task loss: {task_loss.item():2.4f} | T: {timestamp - current_wallclock:4.2f}s"
+                        )
+                    current_wallclock = timestamp
+
+                if not all(torch.isfinite(obj) for obj in objective_values):
+                    log.info(f"Recovery loss is non-finite in iteration {iteration}. Cancelling reconstruction!")
+                    break
+
+                for trial in range(num_trials):
+                    stats[f"Trial_{trial}_Val"].append(objective_values[trial].item())
+
+                if dryrun:
+                    break
+        except KeyboardInterrupt:
+            print(f"Recovery interrupted manually in iteration {iteration}!")
+            pass
+
+        self.netG = None
+        return [candidate.detach() for candidate in best_candidates]
 
     def _compute_objective(self, netG, noise, labels, rec_model, optimizer, shared_data, iteration):
         def closure():

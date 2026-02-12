@@ -37,9 +37,9 @@ regularization:
   group_regularization: # Not implemented. Unclear to me how this was implemented without accesss to the source code
     parallel: True
     scale: 0.01
-    coarse_iters: 1000 
+    coarse_iters: 5000 
     warmup_iters: 0 
-    ransac_model_path: None 
+    ransac_model_path: null 
     kernel_size: 7 
     nb_scale: 7 
     coarse_tolerance: 0.05 

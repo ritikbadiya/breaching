@@ -24,6 +24,25 @@ if not sys.warnoptions:
 
 
 def _load_networks(resume_pth, kernel_size):
+    if resume_pth is None:
+        raise ValueError(
+            "RANSAC-Flow: `resume_pth` is None. Provide a valid path to a `.pth` checkpoint "
+            "(e.g. `model/pretrained/MegaDepth_Theta1_Eta001_Grad1_0.774.pth`) or run "
+            "`model/pretrained/download_model.sh`."
+        )
+    if isinstance(resume_pth, str) and resume_pth.strip().lower() in {"", "none"}:
+        raise ValueError(
+            f"RANSAC-Flow: `resume_pth` is an invalid string ({resume_pth!r}). Provide a valid path to a `.pth` "
+            "checkpoint (e.g. `model/pretrained/MegaDepth_Theta1_Eta001_Grad1_0.774.pth`) or run "
+            "`model/pretrained/download_model.sh`."
+        )
+    if not os.path.exists(resume_pth):
+        raise FileNotFoundError(
+            f"RANSAC-Flow: checkpoint not found at {resume_pth!r}. "
+            "Download the pretrained models by running `model/pretrained/download_model.sh` "
+            "from the RANSAC-Flow repo."
+        )
+
     Transform = outil.Homography
     network = {
         'netFeatCoarse': model.FeatureExtractor(),

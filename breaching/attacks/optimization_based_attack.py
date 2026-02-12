@@ -60,11 +60,13 @@ class OptimizationBasedAttacker(_BaseAttacker):
 
     def __repr__(self):
         n = "\n"
+        parallel_regs = getattr(self, "parallel_regularizers", [])
         return f"""Attacker (of type {self.__class__.__name__}) with settings:
     Hyperparameter Template: {self.cfg.type}
 
     Objective: {repr(self.objective)}
     Regularizers: {(n + ' '*18).join([repr(r) for r in self.regularizers])}
+    Parallel Regularizers: {(n + ' '*27).join([repr(r) for r in parallel_regs]) if parallel_regs else 'None'}
     Augmentations: {(n + ' '*18).join([repr(r) for r in self.augmentations])}
 
     Optimization Setup:

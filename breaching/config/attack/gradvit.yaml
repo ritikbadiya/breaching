@@ -2,13 +2,11 @@ defaults:
   - _default_optimization_attack
   - _self_
 type: gradvit
-attack_type: gradvit
 label_strategy: yin
 
 objective:
   type: cosine-similarity
   scale: 1e-1 # need to have a much smaller scale like 0.0001 for euclidean objectives
-  max_iters: 20_000
 
 restarts:
   num_trials: 3
@@ -32,11 +30,6 @@ regularization:
   patch_prior:
     scale: 1e-1
     patch_size: 14
-  # total_variation:
-  #   scale: 1.0
-  #   # 0.2 # The old version did not take the mean dx + dy as the new version, so this corresponds to 0.1 in the old repo
-  #   inner_exp: 1
-  #   outer_exp: 1
   total_variation:
     scale: 0.1
     inner_exp: 2
@@ -46,6 +39,7 @@ regularization:
     scale: 0.1
     pnorm: 2
   group_regularization:
+    parallel: True
     scale: 0.01
     warmup_iters: 2000
     
