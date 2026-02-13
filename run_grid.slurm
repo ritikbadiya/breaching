@@ -48,12 +48,12 @@ echo "PROJECT_ROOT = ${PROJECT_ROOT}"
 
 cd "${PROJECT_ROOT}"
 
-if [[ ! -f bin/activate ]]; then
-    echo "ERROR: Virtual environment not found at ${PROJECT_ROOT}/bin/activate"
-    exit 1
-fi
+# Activate correct venv
+source "${PROJECT_ROOT}/venv/bin/activate"
 
-source bin/activate
+echo "Python path: $(which python)"
+python --version
+
 
 # Sanity checks
 which python
@@ -73,8 +73,11 @@ BATCH_SIZES=(1)
 STEP_SIZES=(0.1)
 OBJ_SCALES=(1.0)
 TV_SCALES=(0.0001 0.001 0.01 0.1 0.2)
+TV_SCALES=(0.0001)
 # PATCH_SCALES=(0.1)
 PE_SCALE=(0.01 0.1 1.0)
+PE_SCALE=(0.01)
+
 # GR_SCALES=(0.0001 0.001 0.01 0.1 0.2 0.5)
 
 # -----------------------------------------------------------------------------
