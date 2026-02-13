@@ -34,8 +34,13 @@ def main_process(process_idx, local_group_size, cfg):
 
     # Propose a model architecture:
     # (Replace this line with your own model if you want)
-    model, loss_fn = breaching.cases.construct_model(cfg.case.model, cfg.case.data, cfg.case.server.pretrained)
-
+    model, loss_fn = breaching.cases.construct_model(
+        cfg.case.model,
+        cfg.case.data,
+        cfg.case.server.pretrained,
+        cfg_case=cfg.case,
+    )
+    log.info(f"Number of Trainable Parameters: {breaching.utils.count_trainable_parameters(model)}")
     # Instantiate server and vet model
     # This is a no-op for an honest-but-curious server, but a malicious-model server can modify the model in this step.
     server = breaching.cases.construct_server(model, loss_fn, cfg.case, setup)

@@ -23,7 +23,13 @@ def main_process(process_idx, local_group_size, cfg, num_trials=100, job_name=No
     """This function controls the central routine."""
     total_time = time.time()  # Rough time measurements here
     setup = breaching.utils.system_startup(process_idx, local_group_size, cfg)
-    model, loss_fn = breaching.cases.construct_model(cfg.case.model, cfg.case.data, cfg.case.server.pretrained)
+    model, loss_fn = breaching.cases.construct_model(
+        cfg.case.model,
+        cfg.case.data,
+        cfg.case.server.pretrained,
+        cfg_case=cfg.case,
+    )
+    log.info(f"Number of Trainable Parameters: {breaching.utils.count_trainable_parameters(model)}")
 
     if cfg.num_trials is not None:
         num_trials = cfg.num_trials
@@ -32,7 +38,7 @@ def main_process(process_idx, local_group_size, cfg, num_trials=100, job_name=No
     model = server.vet_model(model)
     attacker = breaching.attacks.prepare_attack(model, loss_fn, cfg.attack, setup)
     if cfg.case.user.user_idx is not None:
-        print("The argument user_idx is disregarded during the benchmark. Data selection is fixed.")
+        log.info("The argument user_idx is disregarded during the benchmark. Data selection is fixed.")
     log.info(
         f"Partitioning is set to {cfg.case.data.partition}. Make sure there exist {num_trials} users in this scheme."
     )

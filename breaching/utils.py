@@ -242,6 +242,13 @@ def overview(server, user, attacker):
     print(attacker)
 
 
+def count_trainable_parameters(model):
+    """Return the number of trainable parameters in a model."""
+    if model is None:
+        return 0
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
 def save_reconstruction(
     reconstructed_user_data, server_payload, true_user_data, cfg, side_by_side=True, target_indx=None
 ):
