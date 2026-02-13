@@ -4,6 +4,7 @@ import torch
 import re
 from .metrics import psnr_compute, registered_psnr_compute, image_identifiability_precision, cw_ssim
 from ..cases import construct_dataloader
+from ..cases.models.parameter_utils import shared_parameters as model_shared_parameters
 
 import copy
 import logging
@@ -62,7 +63,7 @@ def report(
         buffers = payload["buffers"]
 
         with torch.no_grad():
-            for param, server_state in zip(model.parameters(), parameters):
+            for param, server_state in zip(model_shared_parameters(model), parameters):
                 param.copy_(server_state.to(**setup))
             if buffers is not None:
                 for buffer, server_state in zip(model.buffers(), buffers):

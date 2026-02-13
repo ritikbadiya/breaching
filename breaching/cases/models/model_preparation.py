@@ -168,6 +168,8 @@ class TimmVPTAdapter(nn.Module):
 
         for p in self.base_model.parameters():
             p.requires_grad = False
+        if not _unfreeze_classifier_head(self.base_model):
+            log.warning("VPT PEFT requested but no classifier head was found to unfreeze.")
 
         embed_dim = int(getattr(base_model, "embed_dim", getattr(base_model, "num_features")))
         prompt_dim = int(prompt_proj_dim) if prompt_proj_dim is not None and int(prompt_proj_dim) > 0 else embed_dim
@@ -291,6 +293,8 @@ class TimmVPTAdapter(nn.Module):
         params += list(self.prompt_mlp.parameters()) if isinstance(self.prompt_mlp, nn.Module) else []
         if self.deep_prompt_embeddings is not None:
             params.append(self.deep_prompt_embeddings)
+        # Include any trainable base model params (e.g., classification head).
+        params += [p for p in self.base_model.parameters() if p.requires_grad]
         return params
 
 
@@ -319,6 +323,29 @@ def _replace_linear_with_lora(module_parent, attr_name, rank, alpha, dropout):
         setattr(module_parent, attr_name, LoRALinear(old_layer, rank=rank, alpha=alpha, dropout=dropout))
         return 1
     return 0
+
+
+def _unfreeze_classifier_head(model):
+    head_modules = []
+    if hasattr(model, "get_classifier"):
+        classifier = model.get_classifier()
+        if isinstance(classifier, nn.Module):
+            head_modules.append(classifier)
+        elif isinstance(classifier, str):
+            module = getattr(model, classifier, None)
+            if isinstance(module, nn.Module):
+                head_modules.append(module)
+    for attr in ("head", "head_dist", "classifier", "fc", "last_linear"):
+        module = getattr(model, attr, None)
+        if isinstance(module, nn.Module):
+            head_modules.append(module)
+
+    found = False
+    for module in set(head_modules):
+        for p in module.parameters():
+            p.requires_grad = True
+            found = True
+    return found
 
 
 def _apply_lora_to_vit(backbone, peft_cfg):
@@ -370,6 +397,8 @@ def _apply_lora_to_vit(backbone, peft_cfg):
 
     if adapters == 0:
         log.warning("LoRA PEFT requested but no target layers were patched.")
+    if not _unfreeze_classifier_head(backbone):
+        log.warning("LoRA PEFT requested but no classifier head was found to unfreeze.")
     return TimmLoRAAdapter(backbone)
 
 
