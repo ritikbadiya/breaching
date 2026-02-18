@@ -3,6 +3,8 @@ myenv3/
 venv/
 .env/
 
+run_grid_3.slurm
+
 data/
 dataset/
 datasets/
