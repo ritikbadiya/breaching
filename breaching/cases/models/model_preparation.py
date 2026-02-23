@@ -298,6 +298,88 @@ class TimmVPTAdapter(nn.Module):
         return params
 
 
+class CNNPromptTuningAdapter(nn.Module):
+    """
+    CNN Prompt Tuning using learnable padding.
+    
+    Adds trainable border pixels around the input image.
+    The backbone CNN is frozen.
+    """
+
+    def __init__(self, base_model, image_size, prompt_size=4):
+        """
+        Args:
+            base_model: pretrained CNN
+            image_size: (C, H, W)
+            prompt_size: number of pixels to pad on each side
+        """
+        super().__init__()
+
+        if image_size is None or len(image_size) != 3:
+            raise ValueError("image_size must be a 3-tuple/list (C, H, W).")
+        if int(prompt_size) < 0:
+            raise ValueError("prompt_size must be non-negative.")
+
+        self.base_model = base_model
+        self.prompt_size = int(prompt_size)
+
+        C, H, W = [int(v) for v in image_size]
+        if C <= 0 or H <= 0 or W <= 0:
+            raise ValueError("image_size entries must be positive.")
+        self.C = C
+        self.H = H
+        self.W = W
+
+        # Freeze backbone
+        for p in self.base_model.parameters():
+            p.requires_grad = False
+        # Keep stateful layers (e.g., BatchNorm) fixed during adapter training.
+        self.base_model.eval()
+
+        # Learnable border prompt over padded canvas.
+        self.prompt = nn.Parameter(
+            torch.zeros(1, C, H + 2 * self.prompt_size, W + 2 * self.prompt_size)
+        )
+        mask = torch.ones_like(self.prompt)
+        p = self.prompt_size
+        if p > 0:
+            mask[:, :, p : p + H, p : p + W] = 0.0
+        self.register_buffer("prompt_mask", mask)
+
+        nn.init.uniform_(self.prompt, -0.02, 0.02)
+
+    def train(self, mode=True):
+        super().train(mode)
+        self.base_model.eval()
+        return self
+
+    def forward(self, x):
+        """
+        x: (B, C, H, W)
+        """
+        if x.ndim != 4:
+            raise ValueError("Input x must have shape (B, C, H, W).")
+        if x.shape[1] != self.C or x.shape[2] != self.H or x.shape[3] != self.W:
+            raise ValueError(
+                f"Input shape mismatch: expected (B, {self.C}, {self.H}, {self.W}), got {tuple(x.shape)}."
+            )
+
+        B = x.shape[0]
+        p = self.prompt_size
+
+        # Border-only prompt: center region is always zeroed and replaced by input.
+        prompt = (self.prompt * self.prompt_mask).to(dtype=x.dtype)
+        prompt = prompt.expand(B, -1, -1, -1)
+
+        # Insert image into center (no additive prompt on image content).
+        padded = prompt.clone()
+        padded[:, :, p : p + self.H, p : p + self.W] = x
+
+        return self.base_model(padded)
+
+    def shared_parameters(self):
+        return [self.prompt]
+
 def _is_vit_backbone(model):
     return hasattr(model, "patch_embed") and hasattr(model, "blocks") and hasattr(model, "forward")
 
@@ -415,12 +497,23 @@ def _apply_vpt_to_vit(backbone, peft_cfg):
     )
 
 
+def _apply_cnn_prompt_tuning(model, peft_cfg, cfg_data=None):
+    cnn_cfg = _cfg_get(peft_cfg, "cnn_prompt", peft_cfg)
+    prompt_size = int(_cfg_get(cnn_cfg, "prompt_size", _cfg_get(cnn_cfg, "size", 4)))
+    image_size = _cfg_get(cnn_cfg, "image_size", None)
+    if image_size is None and cfg_data is not None and hasattr(cfg_data, "shape"):
+        image_size = tuple(int(v) for v in cfg_data.shape[:3])
+    if image_size is None:
+        raise ValueError("CNN prompt PEFT requires `image_size` or available `cfg_data.shape`.")
+    if len(image_size) != 3:
+        raise ValueError("CNN prompt `image_size` must be a 3-tuple/list (C, H, W).")
+    return CNNPromptTuningAdapter(model, image_size=image_size, prompt_size=prompt_size)
+
+
 def _adapt_model_with_peft(model, cfg_model, modality="vision", **kwargs):
     if modality != "vision":
         return model
     model_name = _model_name(cfg_model).lower()
-    if "vit" not in model_name:
-        return model
 
     peft_cfg = _parse_peft_cfg(cfg_model, kwargs)
     if peft_cfg is None or not bool(_cfg_get(peft_cfg, "enabled", True)):
@@ -432,15 +525,22 @@ def _adapt_model_with_peft(model, cfg_model, modality="vision", **kwargs):
             peft_type = "vpt"
         elif _cfg_get(peft_cfg, "lora", None) is not None:
             peft_type = "lora"
+        elif _cfg_get(peft_cfg, "cnn_prompt", None) is not None:
+            peft_type = "cnn_prompt"
     if peft_type is None:
-        raise ValueError("PEFT config requires `type` to be one of `vpt` or `lora`.")
+        raise ValueError("PEFT config requires `type` to be one of `vpt`, `lora`, or `cnn_prompt`.")
+
+    peft_type = str(peft_type).lower()
+    if peft_type in ("cnn_prompt", "cnn-prompt"):
+        log.info("Applying %s PEFT adaptation to CNN model %s.", peft_type, model_name)
+        return _apply_cnn_prompt_tuning(model, peft_cfg, cfg_data=_cfg_get(kwargs, "cfg_data", None))
 
     backbone, parent = _find_vit_backbone(model)
     if backbone is None:
-        log.warning("PEFT requested for %s but no compatible ViT backbone was found.", model_name)
+        if peft_type in ("vpt", "lora"):
+            log.warning("PEFT requested for %s but no compatible ViT backbone was found.", model_name)
         return model
 
-    peft_type = str(peft_type).lower()
     log.info("Applying %s PEFT adaptation to ViT model %s.", peft_type, model_name)
     if peft_type == "vpt":
         adapted_backbone = _apply_vpt_to_vit(backbone, peft_cfg)
@@ -885,7 +985,7 @@ def _construct_vision_model(cfg_model, cfg_data, pretrained=True, **kwargs):
         else:
             raise ValueError("Model could not be found.")
 
-    model = _adapt_model_with_peft(model, raw_cfg_model, modality="vision", **kwargs)
+    model = _adapt_model_with_peft(model, raw_cfg_model, modality="vision", cfg_data=cfg_data, **kwargs)
     return VisionContainer(model)
 
 
