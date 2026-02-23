@@ -1,0 +1,55 @@
+# SEER Attack: Hiding in Plain Sight - Disguising Data Stealing Attacks in Federated Learning
+# Paper: https://arxiv.org/abs/2401.XXXXX
+# Code: https://github.com/insait-institute/SEER
+
+type: seer
+attack_type: seer
+
+# Parameter Selection Configuration
+# Key hyperparameter: Only select 0.1% of parameters for efficiency
+param_selection:
+  frac: 0.001        # Fraction of parameters to select (0.1%)
+  size: 8400         # Maximum absolute number of parameters
+  seed: 98           # Random seed for reproducibility
+
+# Disaggregator (Encoder) Configuration
+# Compresses gradients to latent representation
+disaggregator:
+  mid_rep_frac: 1.0  # Fraction of image pixels for hidden dimension
+                     # (1.0 means hidden_dim = num_image_pixels)
+
+# Reconstructor (Decoder) Configuration
+# Reconstructs images from latent representation
+reconstructor:
+  type: deconv       # Options: linear, deconv
+                     # deconv: Deconvolutional layers for better quality
+                     # linear: Single linear layer (simpler, faster)
+
+# Loss Configuration
+loss:
+  gradient_loss_weight: 1.0        # Weight for gradient matching loss
+  tv_loss_weight: 0.0              # Total variation regularization
+  boundary_loss_weight: 0.0        # Loss to keep images in valid range
+  pixel_loss_weight: 0.0           # Direct pixel-level L2 loss
+
+# Optimization Configuration
+optim:
+  optimizer: adam                  # adam, sgd, lbfgs
+  step_size: 0.0001              # Learning rate
+  boxed: False                    # Clip gradients to box constraints
+  max_iterations: 1000           # Number of optimization steps
+  grad_clip: 1.0                 # Gradient clipping threshold (0 = no clip)
+  callback: 100                  # Print progress every N iterations
+  step_size_decay: null          # Learning rate schedule (optional)
+
+# Label Strategy
+label_strategy: provided          # Labels are provided with shared_data
+
+# Normalize gradients before attack
+normalize_gradients: False
+
+# Implementation Details
+impl:
+  dtype: float                    # float or float32
+  mixed_precision: False          # Use mixed precision (fp16)
+  deterministic: False            # Force deterministic operations
