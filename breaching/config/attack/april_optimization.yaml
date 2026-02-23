@@ -29,7 +29,15 @@ differentiable_augmentations: False
 
 regularization:
   total_variation:
-    scale: 0.01
+    scale: 0.0001
     # 0.2 # The old version did not take the mean dx + dy as the new version, so this corresponds to 0.1 in the old repo
     inner_exp: 1
     outer_exp: 1
+  image_prior:
+    scale: 0.001
+  l2_regularization: # For parameter scaling
+    scale: 0.001
+  # patch_prior:
+  #   scale: 0.0001
+  #   patch_size: 16
+
