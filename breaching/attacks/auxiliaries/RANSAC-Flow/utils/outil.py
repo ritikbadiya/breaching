@@ -158,7 +158,9 @@ def RANSAC(nbIter, match1, match2, tolerance, nbPoint, Transform) :
         if nbInlier[best] > bestInlier:
            bestParams = H21[best]
            bestInlier = nbInlier[best]
-            
+    
+    if bestParams is None:
+        return None, 0, [], []
     error = Prediction(match1[None], match2[None], bestParams[None]).squeeze(0)
     isInlier = error < tolerance
     return bestParams.cpu().numpy(), bestInlier.cpu().numpy(), isInlier.cpu().numpy(), match2[isInlier].cpu().numpy()
