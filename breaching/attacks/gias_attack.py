@@ -429,6 +429,12 @@ class GenImagePriorAttacker(OptimizationBasedAttacker):
         # Initialize optimizers
         # Since _init_optimizer only looks into self.cfg.optim,
         # we need to manually overwrite the optimization parameters here to use the ones for parameter optimization
+        prev_optim = {
+            "optimizer": self.cfg.optim.optimizer,
+            "step_size": self.cfg.optim.step_size,
+            "max_iterations": self.cfg.optim.max_iterations,
+            "callback": self.cfg.optim.callback,
+        }
         self.cfg.optim.optimizer = self.cfg.optim_w.optimizer
         self.cfg.optim.step_size = self.cfg.optim_w.step_size
         self.cfg.optim.max_iterations = self.cfg.optim_w.max_iterations
@@ -484,6 +490,11 @@ class GenImagePriorAttacker(OptimizationBasedAttacker):
         except KeyboardInterrupt:
             print(f"Recovery interrupted manually in iteration {iteration}!")
             pass
+        finally:
+            self.cfg.optim.optimizer = prev_optim["optimizer"]
+            self.cfg.optim.step_size = prev_optim["step_size"]
+            self.cfg.optim.max_iterations = prev_optim["max_iterations"]
+            self.cfg.optim.callback = prev_optim["callback"]
 
         self.netG = None # Free up memory
 
