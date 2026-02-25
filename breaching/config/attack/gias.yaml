@@ -31,8 +31,8 @@ optim:
   optimizer: adam
   signed:
   step_size: 0.03
-  boxed: False
-  max_iterations: 1500
+  boxed: True
+  max_iterations: 4000
   step_size_decay: step-lr
 
   callback: 500 # Print objective value every callback many iterations
