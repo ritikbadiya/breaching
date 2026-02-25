@@ -32,7 +32,7 @@ optim:
   optimizer: adam
   signed:
   step_size: 0.1
-  boxed: False
+  boxed: True
   max_iterations: 4_000
   step_size_decay: step-lr
 
@@ -47,5 +47,7 @@ regularization:
   l2_regularization:
     scale: 1e-4
   group_regularization:
-    parallel: true
+    parallel: false
     scale: 1e-4
+  image_prior:
+    scale: 1e-2

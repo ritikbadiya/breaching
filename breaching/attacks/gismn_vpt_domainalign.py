@@ -324,14 +324,16 @@ class SemanticSimilarityBasedLatentCodeAttackerVPT(OptimizationBasedAttacker):
             cond_labels = self._make_cond_label(labels, self.setup["device"], self.num_classes)
         elif self.cfg.generator.type == "styleganxl":
             cond_labels = self._make_cond_label(labels, self.setup["device"], self.netG.c_dim)
+            # log.info(f"Conditioning labels for StyleGAN-XL have been created with shape {cond_labels.shape} and values {torch.where(cond_labels != 0)}")
         elif self.cfg.generator.type in ("stylegan2", "stylegan2_ada"):
             cond_labels = self._make_cond_label(labels, self.setup["device"], self.netG.c_dim)
 
         with torch.no_grad():
             best_candidate = self._generate_candidate(self.netG, self.noise, cond_labels).detach().clone()
+            log.info(f"Initial candidate generated with shape {best_candidate.shape} and value range [{best_candidate.min().item():.4f}, {best_candidate.max().item():.4f}]")
 
         # Initialize optimizers
-        # In CI-Net, we optimzie the parameters ofthe Generator network instead of the image pixels directly
+        # In GI-SMN, we optimzie the noise instead of the parameters of the Generator network or the image pixels directly
         optimizer, scheduler = self._init_optimizer([self.noise])
         current_wallclock = time.time()
         try:
