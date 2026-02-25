@@ -30,8 +30,8 @@ restarts:
 optim:
   optimizer: adam
   signed:
-  step_size: 0.1
-  boxed: True
+  step_size: 0.03
+  boxed: False
   max_iterations: 2000
   step_size_decay: step-lr
 
@@ -41,7 +41,7 @@ optim_w:
   optimizer: adam
   signed: 
   step_size: 0.001
-  boxed: True
+  boxed: False
   max_iterations: 8_000
   step_size_decay: step-lr
 
@@ -57,8 +57,8 @@ regularization:
   #   parallel: true
   #   scale: 1e-4
   # image_prior:
-  #   scale: 0.01
-  #   max_iters: 0
+  #   scale: 0.0001
+  #   max_iters: 8_000
   #   first_bn_multiplier: 1.0
   l2_regularization:
-    scale: 1e-4
+    scale: 0.001

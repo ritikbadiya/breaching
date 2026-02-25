@@ -9,7 +9,7 @@
 #   sbatch run_grid.slurm
 # -----------------------------------------------------------------------------
 
-#SBATCH --job-name=igpe_grid_master_2
+#SBATCH --job-name=ig_grid_master_2
 #SBATCH --output=slurm_logs/master_%j.out
 #SBATCH --error=slurm_logs/master_%j.err
 #SBATCH --partition=medium
@@ -72,7 +72,7 @@ ATTACK=invertinggradients
 BATCH_SIZES=(1)
 STEP_SIZES=(0.1)
 OBJ_SCALES=(1.0)
-TV_SCALES=(0.1)
+TV_SCALES=(1e-2 1e-4)
 # PATCH_SCALES=(0.1)
 # PE_SCALES=(0.001 0.01 0.1 0.5 1.0)
 
@@ -93,9 +93,9 @@ for bs in "${BATCH_SIZES[@]}"; do
 
                     python benchmark_breaches.py \
                         case=1_single_image_small \
-                        case/data=MNIST \
-                        case.model=vit_custom \
-                        case.server.pretrained=False \
+                        case/data=CIFAR10 \
+                        case.model=vit_small \
+                        case.server.pretrained=True \
                         case.data.batch_size=${bs} \
                         case.user.num_data_points='${case.data.batch_size}' \
                         attack=${ATTACK} \
