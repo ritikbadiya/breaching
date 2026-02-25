@@ -360,8 +360,11 @@ class GenerativeStyleMigrationAttacker(OptimizationBasedAttacker):
                 if weights_path:
                     if self._biggan_state_dict is None:
                         self._biggan_state_dict = torch.load(weights_path, map_location="cpu")
-                    netG.load_state_dict(self._biggan_state_dict, strict=False)
+                        netG.load_state_dict(self._biggan_state_dict, strict=False)
                     log.info(f"Loaded BigGAN weights from {weights_path}")
+                else:
+                    log.info(f"Randomly Initializing BigGAN weights since no pretrained weights found for output_dim={self.bigganconfig.output_dim} and num_classes={self.bigganconfig.num_classes}.")
+                    netG.init_weights_normal(mean=0.0, std=1.0)  # Initialize the generator weights with normal distribution
                 noise = truncated_noise_sample(
                     batch_size=self.batch_size, dim_z=netG.config.z_dim, truncation=self.truncation
                 )

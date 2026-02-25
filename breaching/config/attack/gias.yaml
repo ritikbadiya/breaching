@@ -41,24 +41,24 @@ optim_w:
   optimizer: adam
   signed: 
   step_size: 0.001
-  boxed: False
-  max_iterations: 0 #8_000
+  boxed: True
+  max_iterations: 000
   step_size_decay: step-lr
 
   callback: 1000 # Print objective value every callback many iterations
 
 regularization:
   total_variation:
-    scale: 1e-2
+    scale: 1e-4
     # 0.2 # The old version did not take the mean dx + dy as the new version, so this corresponds to 0.1 in the old repo
     inner_exp: 1
     outer_exp: 1
   # group_lazy_regularization:
   #   parallel: true
   #   scale: 1e-4
-  # image_prior:
-  #   scale: 0.0001
-  #   max_iters: 8_000
-  #   first_bn_multiplier: 1.0
+  image_prior:
+    scale: 0.01
+    max_iters: 0
+    first_bn_multiplier: 1.0
   l2_regularization:
-    scale: 0.001
+    scale: 1e-4

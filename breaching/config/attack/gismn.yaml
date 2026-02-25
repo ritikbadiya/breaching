@@ -15,10 +15,10 @@ generator:
   ngf: 64
   nc: 3
   # network_wts: "${hydra:runtime.cwd}/breaching/pretrained/DCGAN/netG_epoch_199.pth"
-  # type: styleganxl
-  # network_wts: "${hydra:runtime.cwd}/breaching/pretrained/StyleGANXL/imagenet32.pkl" #cifar10.pkl"
-  type: biggan
-  network_wts: "${hydra:runtime.cwd}/breaching/pretrained/BigGAN/biggan-deep-128-pytorch_model.bin"
+  type: styleganxl
+  network_wts: "${hydra:runtime.cwd}/breaching/pretrained/StyleGANXL/cifar10.pkl"
+  # type: biggan
+  # network_wts: "${hydra:runtime.cwd}/breaching/pretrained/BigGAN/biggan-deep-128-pytorch_model.bin"
   # type: stylegan2
   # network_wts: "${hydra:runtime.cwd}/breaching/pretrained/StyleGAN2/cifar10.pkl"
 
