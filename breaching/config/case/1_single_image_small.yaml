@@ -6,12 +6,12 @@ defaults:
   - server: honest-but-curious
   - user: local_gradient
   - _self_
-model: vit_custom
+model: vit_small
 
 # Optional ViT PEFT configuration.
 peft:
   enabled: true
-  type: vpt  # choices: vpt, lora
+  type: vpt # choices: vpt, lora
   vpt:
     num_tokens: 16
     dropout: 0.0
@@ -20,7 +20,7 @@ peft:
     num_deep_layers:
     prompt_mlp_layers: 0
   # lora:
-  #   rank: 2
+  #   rank: 8
   #   alpha: 16
   #   dropout: 0.0
   #   target_modules: [q, k, v] # choices q, k, v, mlp
