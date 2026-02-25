@@ -1,7 +1,18 @@
-from transformers import CLIPTokenizer, BertTokenizer, BertModel, CLIPTextModel
+# Code for computing the similarity between text embeddings of class names from CIFAR-10 and ImageNet 
+# using a specified text embedding model (e.g., SigLIP, CLIP, ALIGN). 
+# This can be used to analyze how closely the class names from the two datasets are represented in the embedding space, 
+# which may have implications for transfer learning and domain adaptation in the context of the GISMN attack.
+from transformers import CLIPTokenizer, CLIPTextModel
+from transformers import AutoTokenizer, AutoModel
+from transformers import AlignModel, AlignTextModel
+from transformers import SiglipTokenizer, SiglipTextModel
 import torch
-from class_names import cifar10_classes, imagenet_classes
+from .class_names import cifar10_classes, imagenet_classes
 import torch.nn.functional as F
+
+import logging
+
+log = logging.getLogger(__name__)
 
 def _center_gram(gram: torch.Tensor) -> torch.Tensor:
     mean_col = gram.mean(dim=0, keepdim=True)
@@ -33,12 +44,25 @@ def centered_kernel_alignment(embeddings_a: torch.Tensor, embeddings_b: torch.Te
     return hsic / (denom + eps)
 
 class TextEmbedder:
-    def __init__(self, model_name="bert-base-uncased", device="cuda"):
-        # self.tokenizer = BertTokenizer.from_pretrained(model_name)
-        # self.model = BertModel.from_pretrained(model_name).to(device)
-        self.tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-base-patch32")
-        self.model = CLIPTextModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
+    def __init__(self, model_name="bert", device="cuda"):
+        self.model_name = model_name
         self.device = device
+        if model_name == "align": 
+            # Scaling Up Visual and Vision-Language Representation Learning With Noisy Text Supervision
+            # https://proceedings.mlr.press/v139/jia21b/jia21b.pdf
+            self.model = AlignModel.from_pretrained("kakaobrain/align-base").to(device)
+            self.tokenizer = AutoTokenizer.from_pretrained("kakaobrain/align-base")
+            log.info(f"Initialized Align Model for text embedding.")
+        elif model_name == "clip":
+            self.tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-base-patch32")
+            self.model = CLIPTextModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
+            log.info(f"Initialized CLIP Text Model for text embedding.")
+        elif model_name == "siglip":
+            self.model = SiglipTextModel.from_pretrained("google/siglip-base-patch16-224").to(device)
+            self.tokenizer = AutoTokenizer.from_pretrained("google/siglip-base-patch16-224") # SiglipTokenizer.from_pretrained("google/siglip-base-patch16-224") # 
+            log.info(f"Initialized SigLIP Model for text embedding.")
+        else:
+            raise ValueError(f"Unsupported model_name: {model_name}. Supported options are 'align', 'clip', and 'siglip'.")
 
     def embed(self, text):
         inputs = self.tokenizer(text, 
@@ -49,8 +73,14 @@ class TextEmbedder:
                                 ).to(self.device) # 'pt' indicates that hte tokenizer should return PyTorch tensors
         # print(inputs)
         with torch.no_grad():
-            outputs = self.model(**inputs)
-        return outputs.pooler_output  # Return the mean embedding of the sequence ==> last_hidden_state[:, 0, :]
+            if self.model_name == "align":
+                outputs = self.model.get_text_features(**inputs)
+                return outputs
+            elif self.model_name == "clip":
+                outputs = self.model(**inputs)
+            elif self.model_name == "siglip":
+                outputs = self.model(**inputs)
+        return outputs.pooler_output  # Return last_hidden_state[:, 0, :]
     
 @torch.no_grad()
 def encode_classes(classnames, templates, embedder, device="cuda"):
@@ -66,17 +96,35 @@ def encode_classes(classnames, templates, embedder, device="cuda"):
 
     return torch.stack(all_embeddings, dim=0)  # (num_classes, D)
 
+def find_closest_imagenet_classes(cifar_embeds, imagenet_embeds, imagenet_classnames, topk=1, return_indices=False):
+    similarity = cifar_embeds @ imagenet_embeds.T  # (Ncifar, Nimagenet)
+    values, indices = similarity.topk(topk, dim=-1)
+
+    closest_classes = []
+    for i in range(cifar_embeds.shape[0]):
+        closest = []
+        for rank in range(topk):
+            idx = indices[i, rank].item()
+            if return_indices:
+                closest.append((idx, values[i, rank].item()))
+            else:
+                closest.append((imagenet_classnames[idx], values[i, rank].item()))
+        closest_classes.append(closest)
+    
+    return closest_classes
+
 if __name__ == "__main__":
-    embedder = TextEmbedder()
+    embedder = TextEmbedder(model_name="clip", device="cuda")  # or "clip"
 
     templates = [
         "a photo of a {}",
         "an image of a {}",
+        "a picture of a {}",
         # "a blurry photo of a {}",
         # "a black and white photo of a {}",
         "a cropped photo of a {}",
         "a close-up photo of a {}",
-        # "a bright photo of a {}",
+        "a bright photo of a {}",
     ]
 
     cifar_embeds = encode_classes(cifar10_classes, templates, embedder)

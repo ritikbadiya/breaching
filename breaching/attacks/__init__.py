@@ -17,6 +17,8 @@ from .cgir_attack import ConditionalGenInstRecAttacker
 from .gismn_attack import GenerativeStyleMigrationAttacker
 from .gias_attack import GenImagePriorAttacker
 
+from .gismn_vpt_domainalign import SemanticSimilarityBasedLatentCodeAttackerVPT
+
 def prepare_attack(model, loss, cfg_attack, setup=dict(dtype=torch.float, device=torch.device("cpu"))):
     if cfg_attack.attack_type == "optimization":
         attacker = OptimizationBasedAttacker(model, loss, cfg_attack, setup)
@@ -54,6 +56,8 @@ def prepare_attack(model, loss, cfg_attack, setup=dict(dtype=torch.float, device
         attacker = GenerativeStyleMigrationAttacker(model, loss, cfg_attack, setup)
     elif cfg_attack.attack_type == "gias":
         attacker = GenImagePriorAttacker(model, loss, cfg_attack, setup)
+    elif cfg_attack.attack_type == "ss-vpt":
+        attacker = SemanticSimilarityBasedLatentCodeAttackerVPT(model, loss, cfg_attack, setup)
     else:
         raise ValueError(f"Invalid type of attack {cfg_attack.attack_type} given.")
 
