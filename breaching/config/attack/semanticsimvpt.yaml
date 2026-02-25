@@ -1,0 +1,51 @@
+defaults:
+  - _default_optimization_attack
+  - _self_
+type: generativegia
+attack_type: ss-vpt
+
+objective:
+  type: euclidean-grad-cossim-posembed
+  scale: 1.0 # need to have a much smaller scale like 0.0001 for euclidean objectives
+  posembed_scale: 0.1
+
+generator:
+  # type: styleganxl
+  z_dim: 100
+  ngf: 64
+  nc: 3
+  # network_wts: "${hydra:runtime.cwd}/breaching/pretrained/DCGAN/netG_epoch_199.pth"
+  type: styleganxl
+  network_wts: "${hydra:runtime.cwd}/breaching/pretrained/StyleGANXL/imagenet32.pkl" #cifar10.pkl"
+  # type: biggan
+  # network_wts: "${hydra:runtime.cwd}/breaching/pretrained/BigGAN/biggan-deep-128-pytorch_model.bin"
+  # type: stylegan2
+  # network_wts: "${hydra:runtime.cwd}/breaching/pretrained/StyleGAN2/cifar10.pkl"
+  nclasses: 1000 # Only needed for class-conditional generators like BigGAN and StyleGAN2-ADA or StyleGANXL-ADA.
+
+
+restarts:
+  num_trials: 1
+  scoring: "cosine-similarity"
+
+optim:
+  optimizer: adam
+  signed:
+  step_size: 0.1
+  boxed: False
+  max_iterations: 4_000
+  step_size_decay: step-lr
+
+  callback: 1000 # Print objective value every callback many iterations
+
+regularization:
+  total_variation:
+    scale: 1e-4
+    # 0.2 # The old version did not take the mean dx + dy as the new version, so this corresponds to 0.1 in the old repo
+    inner_exp: 1
+    outer_exp: 1
+  l2_regularization:
+    scale: 1e-4
+  group_regularization:
+    parallel: true
+    scale: 1e-4
