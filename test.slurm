@@ -12,8 +12,8 @@
 #SBATCH --job-name=testing
 #SBATCH --output=slurm_logs/master_%j.out
 #SBATCH --error=slurm_logs/master_%j.err
-#SBATCH --partition=medium
-#SBATCH --nodelist=cn3
+#SBATCH --partition=short
+#SBATCH --nodelist=cn5
 #SBATCH --gres=gpu:1
 #SBATCH --mem=16G
 #SBATCH --cpus-per-task=4
@@ -94,7 +94,7 @@ python -c "import torch; print(torch.version.cuda)"
 
 ls -l breaching/attacks/auxiliaries/stylegan_xl/dnnlib/util.py
 
-python benchmark_breaches.py \
+STYLEGANXL_DISABLE_CUSTOM_OPS=1 python benchmark_breaches.py \
     case=1_single_image_small \
     case/data=CIFAR10 \
     case.model=vit_small \

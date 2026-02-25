@@ -300,10 +300,85 @@ def save_reconstruction(
             f"img_rec_{cfg.case.data.name}_{cfg.case.model}_user{cfg.case.user.user_idx}.png",
         )
 
+        labels = None
+        if isinstance(true_user_data, dict) and "labels" in true_user_data:
+            labels = true_user_data["labels"]
+        elif isinstance(reconstructed_user_data, dict) and "labels" in reconstructed_user_data:
+            labels = reconstructed_user_data["labels"]
+        if labels is not None:
+            if torch.is_tensor(labels):
+                labels = labels.detach().cpu().tolist()
+            elif not isinstance(labels, list):
+                labels = [labels]
+            if target_indx is not None:
+                if torch.is_tensor(target_indx):
+                    target_indx = target_indx.detach().cpu().tolist()
+                if isinstance(target_indx, (list, tuple)):
+                    labels = [labels[i] for i in target_indx]
+                else:
+                    labels = [labels[target_indx]]
+
         if not side_by_side:
-            torchvision.utils.save_image(rec_denormalized, filepath)
+            _save_titled_image_grid(
+                rec_denormalized,
+                None,
+                labels,
+                filepath,
+                top_title="Reconstructed",
+            )
         else:
-            torchvision.utils.save_image(torch.cat([rec_denormalized, ground_truth_denormalized]), filepath)
+            _save_titled_image_grid(
+                rec_denormalized,
+                ground_truth_denormalized,
+                labels,
+                filepath,
+                top_title="Reconstructed",
+                bottom_title="Ground Truth",
+            )
+
+
+def _save_titled_image_grid(rec_images, gt_images, labels, filepath, top_title, bottom_title=None):
+    """Save a grid image with row titles and per-image labels."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    padding = 2
+    if gt_images is None:
+        grid = torchvision.utils.make_grid(rec_images, nrow=rec_images.shape[0], padding=padding)
+    else:
+        combined = torch.cat([rec_images, gt_images], dim=0)
+        grid = torchvision.utils.make_grid(combined, nrow=rec_images.shape[0], padding=padding)
+
+    grid_img = torchvision.transforms.functional.to_pil_image(grid)
+    grid_w, grid_h = grid_img.size
+    left_margin = 120
+    top_margin = 24
+    bottom_margin = 24 if labels else 8
+    canvas = Image.new("RGB", (grid_w + left_margin, grid_h + top_margin + bottom_margin), (255, 255, 255))
+    canvas.paste(grid_img, (left_margin, top_margin))
+
+    draw = ImageDraw.Draw(canvas)
+    font = ImageFont.load_default()
+
+    # Row titles (left side)
+    img_h = rec_images.shape[-2]
+    img_w = rec_images.shape[-1]
+    row0_y = top_margin + padding + img_h // 2
+    draw.text((10, row0_y - 6), top_title, fill=(0, 0, 0), font=font)
+    if bottom_title is not None:
+        row1_y = top_margin + padding + img_h + padding + img_h // 2
+        draw.text((10, row1_y - 6), bottom_title, fill=(0, 0, 0), font=font)
+
+    # Per-image labels under columns
+    if labels:
+        for idx, label in enumerate(labels):
+            label_text = f"Label: {label}"
+            x = left_margin + padding + idx * (img_w + padding)
+            text_w = draw.textlength(label_text, font=font) if hasattr(draw, "textlength") else len(label_text) * 6
+            label_x = x + (img_w - text_w) / 2
+            label_y = top_margin + grid_h + 2
+            draw.text((label_x, label_y), label_text, fill=(0, 0, 0), font=font)
+
+    canvas.save(filepath)
 
 
 def dump_metrics(cfg, metrics):

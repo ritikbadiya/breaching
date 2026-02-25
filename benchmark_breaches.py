@@ -126,7 +126,7 @@ def main_launcher(cfg):
 
     launch_time = time.time()
     if cfg.seed is None:
-        cfg.seed = 233  # The benchmark seed is fixed by default!
+        cfg.seed = int.from_bytes(os.urandom(4), "big")  # randomized per run
 
     # Extract job_name from config if provided
     job_name = cfg.get("job_name", None)
