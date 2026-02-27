@@ -71,9 +71,12 @@ class SEERAttacker(_BaseAttacker):
         seer_module = self._build_seer_networks(rec_models[0], shared_data[0])
         
         # Step 3: Setup optimizer
-        optimizer = optimizer_lookup(self.cfg.optim.optimizer)(
-            seer_module.parameters(),
-            lr=self.cfg.optim.step_size
+        optimizer, scheduler = optimizer_lookup(
+            params=seer_module.parameters(),
+            optim_name=self.cfg.optim.optimizer,
+            step_size=self.cfg.optim.step_size,
+            scheduler=self.cfg.optim.step_size_decay,
+            max_iterations=self.cfg.optim.max_iterations
         )
         
         # Step 4: Main optimization loop
@@ -88,6 +91,9 @@ class SEERAttacker(_BaseAttacker):
             # Log progress
             if self.cfg.optim.callback > 0 and iteration % self.cfg.optim.callback == 0:
                 log.info(f"SEER Iteration {iteration}/{num_iterations}, Loss: {stats['loss'][-1]:.6f}")
+
+            if scheduler:
+                scheduler.step()
         
         # Step 5: Prepare final output
         reconstructed_data = dict(data=reconstructed_batch, labels=labels)
@@ -245,8 +251,8 @@ class SEERAttacker(_BaseAttacker):
         grads = torch.autograd.grad(
             batch_loss.sum(), 
             model.parameters(), 
-            create_graph=False,
-            retain_graph=False
+            create_graph=True,
+            retain_graph=True
         )
         
         return grads
@@ -286,19 +292,16 @@ class SEERModule(nn.Module):
         """Forward pass: gradients -> params_selector -> disaggregator -> reconstructor -> images.
         
         Args:
-            gradients: Tuple/list of gradient tensors from model parameters
+            gradients: List/Tuple of gradient tensors from model parameters (unbatched or batched)
             
         Returns:
-            Flattened reconstructed image data
+            Flattened reconstructed image data (batch_size, image_pixels)
         """
-        # Flatten and concatenate all gradients
-        if isinstance(gradients, (list, tuple)):
-            flat_grads = torch.cat([g.flatten(start_dim=1) for g in gradients], dim=1)
-        else:
-            flat_grads = gradients.flatten(start_dim=1) if gradients.dim() > 1 else gradients
-        
+        # Select sparse parameters directly from gradient list
+        sparse_vector = self.param_selector(gradients)
+            
         # Pass through disaggregator (encoder)
-        hidden_repr = self.disaggregator(flat_grads)
+        hidden_repr = self.disaggregator(sparse_vector)
         
         # Pass through reconstructor (decoder)
         reconstructed = self.reconstructor(hidden_repr)
@@ -319,7 +322,13 @@ class ParamSelector(nn.Module):
         self.device = device
         
         # Generate random selection for each parameter layer
-        gen = torch.Generator()
+        try:
+            gen = torch.Generator(device=device)
+        except RuntimeError:
+            gen = torch.Generator() 
+            if device.type == 'cuda':
+                gen = torch.Generator(device='cuda')
+
         gen.manual_seed(seed)
         
         total_selected = 0
@@ -342,21 +351,40 @@ class ParamSelector(nn.Module):
         
         log.info(f"ParamSelector: Selected {self.num_par} params (frac={frac}, size={sz})")
 
-    def forward(self, flat_grads):
+    def forward(self, gradients):
         """Select sparse gradients.
         
         Args:
-            flat_grads: Flattened concatenated gradients (batch_size, total_params)
+            gradients: List/Tuple of gradient tensors
             
         Returns:
             Selected sparse gradients (batch_size, selected_params)
         """
         selected_list = []
         
-        for idx in range(self.num_layers):
-            indices = getattr(self, f'indices_{idx}')
-            selected_list.append(flat_grads[:, indices])
-        
+        if isinstance(gradients, (list, tuple)):
+            for idx, g in enumerate(gradients):
+                indices = getattr(self, f'indices_{idx}')
+                
+                # Handle batch dimension correctly
+                if g.dim() == 1:
+                    # 1D tensor (e.g. bias) - add batch dim [1, N]
+                    g_flat = g.view(1, -1)
+                elif g.dim() > 1:
+                    # Check if batched (B, ...) or unbatched (Out, In, ...)
+                    # Heuristic: If we are in SEER training, input batch size matters.
+                    # Standard FedAvg update is a SINGLE update (batch_size=1 effectively).
+                    # So we should treat it as [1, TotalParams].
+                    # BUT if we pass a BATCH of gradients (e.g. B updates), then we need B.
+                    # For a single image reconstruction, we have ONE update.
+                    g_flat = g.flatten().view(1, -1)
+                
+                # Select indices
+                selected = g_flat[:, indices]
+                selected_list.append(selected)
+        else:
+            return gradients # Fallback for single tensor input
+
         return torch.cat(selected_list, dim=1)
 
 
@@ -382,6 +410,12 @@ class DeconvDecoder(nn.Module):
         
         # Final convolution to RGB
         self.conv_final = nn.Conv2d(32, output_shape[0], kernel_size=3, padding=1)
+        
+        # Move to device
+        self.to(device=device, dtype=dtype)
+        
+        # Move to device
+        self.to(device=device, dtype=dtype)
 
     def forward(self, x):
         """Decode from hidden representation to image.

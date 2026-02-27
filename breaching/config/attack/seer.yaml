@@ -43,7 +43,7 @@ optim:
   step_size_decay: null          # Learning rate schedule (optional)
 
 # Label Strategy
-label_strategy: provided          # Labels are provided with shared_data
+label_strategy: random            # Fallback if labels not provided
 
 # Normalize gradients before attack
 normalize_gradients: False
@@ -53,3 +53,4 @@ impl:
   dtype: float                    # float or float32
   mixed_precision: False          # Use mixed precision (fp16)
   deterministic: False            # Force deterministic operations
+  JIT:                            # JIT script/trace (dangerous)

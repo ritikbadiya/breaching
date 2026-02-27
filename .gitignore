@@ -4,6 +4,10 @@ venv/
 .env/
 
 run_grid_3.slurm
+gias.slurm
+gismn.slurm
+run_seer.slurm
+seer.slurm
 
 data/
 dataset/

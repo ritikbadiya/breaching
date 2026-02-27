@@ -10,7 +10,7 @@ model: vit_small
 
 # Optional ViT PEFT configuration.
 peft:
-  enabled: true
+  enabled: True
   type: lora  # choices: vpt, lora
   # vpt:
   #   num_tokens: 16
