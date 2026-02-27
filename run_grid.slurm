@@ -9,7 +9,7 @@
 #   sbatch run_grid.slurm
 # -----------------------------------------------------------------------------
 
-#SBATCH --job-name=april_ig_grid_master_1
+#SBATCH --job-name=smanna_grid_master_1
 #SBATCH --output=slurm_logs/master_%j.out
 #SBATCH --error=slurm_logs/master_%j.err
 #SBATCH --partition=short
@@ -65,16 +65,16 @@ cd "${BASE_DIR}"
 echo "Virtual environment activated successfully."
 
 
-ATTACK=april_optimization
+ATTACK=gismn
 # -----------------------------------------------------------------------------
 # 1. Define the grid
 # -----------------------------------------------------------------------------
 BATCH_SIZES=(1)
 STEP_SIZES=(0.1)
 OBJ_SCALES=(1.0)
-TV_SCALES=(0.0001 0.001 0.01 0.1 0.2)
+TV_SCALES=(0.01) # 0.0001 0.001 0.01 0.1 0.2)
 # PATCH_SCALES=(0.1)
-PE_SCALE=(0.01 0.1 1.0)
+# PE_SCALE=(0.1) # 0.1 1.0)
 # GR_SCALES=(0.0001 0.001 0.01 0.1 0.2 0.5)
 
 # -----------------------------------------------------------------------------
@@ -85,39 +85,35 @@ count=0
 for bs in "${BATCH_SIZES[@]}"; do
     for ss in "${STEP_SIZES[@]}"; do
         for os in "${OBJ_SCALES[@]}"; do
-            for tv in "${TV_SCALES[@]}"; do
-                # for gs in "${GR_SCALES[@]}"; do
-                # for ps in "${PATCH_SCALES[@]}"; do
+            for ts in "${TV_SCALES[@]}"; do
 
-                JOB_NAME="${ATTACK}_bs${bs}_ss${ss}_os${os}_pes${PE_SCALE}_tv${tv}"
+                JOB_NAME="${ATTACK}_bs${bs}_ss${ss}_os${os}_tvs${ts}"
 
                 echo "Submitting job $count: $JOB_NAME"
 
-                python benchmark_breaches.py \
+                HF_HUB_OFFLINE=0 python benchmark_breaches.py \
                     case=1_single_image_small \
-                    case/data=MNIST \
-                    case.model=vit_custom \
-                    case.server.pretrained=False \
+                    case/data=CIFAR10 \
+                    case.model=vit_small \
+                    case.server.pretrained=True \
                     case.data.batch_size=${bs} \
                     case.user.num_data_points='${case.data.batch_size}' \
                     attack=${ATTACK} \
                     attack.optim.step_size=${ss} \
                     attack.objective.scale=${os} \
-                    attack.objective.posembed_scale=${PE_SCALE} \
-                    attack.regularization.total_variation.scale=${tv} \
+                    attack.regularization.total_variation.scale=${ts} \
                     save_reconstruction=true \
                     dryrun=False \
                     job_name="${JOB_NAME}" \
                     num_trials=3 \
                     case.impl.threads=4
                 
-                # case.user.num_data_points='${case.data.batch_size}' \
                 count=$((count + 1))
                 echo "Job complete $count: $JOB_NAME"
             done
         done
     done
 done
-
+# attack.objective.posembed_scale=${ps} \
 echo "Submitted $count jobs in total at $(date)"
 echo "Grid master finished."

@@ -6,7 +6,7 @@ defaults:
   - server: honest-but-curious
   - user: local_gradient
   - _self_
-model: vit_custom
+model: vit_small
 
 # Optional ViT PEFT configuration.
 peft:
