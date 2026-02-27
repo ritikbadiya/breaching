@@ -224,6 +224,35 @@ class CosineSimilarity(GradientLoss):
         objective = 1 - scalar_product / (rec_norm.sqrt() * data_norm.sqrt())
         return objective
 
+
+class CosineSimilarityLayerWise(GradientLoss):
+    """Gradient matching based on cosine similarity computed per layer."""
+
+    def __init__(self, scale=1.0, task_regularization=0.0, **kwargs):
+        super().__init__()
+        self.scale = scale
+        self.task_regularization = task_regularization
+
+    def gradient_based_loss(self, gradient_rec, gradient_data):
+        return self._cosine_sim_layerwise(gradient_rec, gradient_data) * self.scale
+
+    def __repr__(self):
+        return f"Layer-wise Cosine Similarity with scale={self.scale} and task reg={self.task_regularization}"
+
+    @staticmethod
+    @torch.jit.script
+    def _cosine_sim_layerwise(gradient_rec: List[torch.Tensor], gradient_data: List[torch.Tensor]):
+        objective = gradient_rec[0].new_zeros(1,)
+        for rec, data in zip(gradient_rec, gradient_data):
+            rec = rec.flatten()
+            data = data.flatten()
+            scalar_product = (rec * data).sum()
+            rec_norm = rec.pow(2).sum()
+            data_norm = data.pow(2).sum()
+            objective += 1 - scalar_product / (rec_norm.sqrt() * data_norm.sqrt())
+        objective /= len(gradient_rec)
+        return objective
+
 class EuclideanGradCosSimPosEmbed(GradientLoss):
     """Gradient matching based on cosine similarity of two sets of PosEmbeddings."""
 
@@ -740,6 +769,7 @@ class BoostingGLAEuclidean(torch.nn.Module):
 objective_lookup = {
     "euclidean": Euclidean,
     "cosine-similarity": CosineSimilarity,
+    "layerwise-cosine-similarity": CosineSimilarityLayerWise,
     "euclidean-grad-cossim-posembed": EuclideanGradCosSimPosEmbed,
     "cosine-grad-cossim-posembed": CosSimGradCosSimPosEmbed,
     "masked-cosine-similarity": MaskedCosineSimilarity,

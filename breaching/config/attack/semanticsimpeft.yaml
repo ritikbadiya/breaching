@@ -2,7 +2,7 @@ defaults:
   - _default_optimization_attack
   - _self_
 type: generativegia
-attack_type: ss-vpt
+attack_type: ss-peft
 
 objective:
   type: euclidean-grad-cossim-posembed

@@ -5,7 +5,7 @@ type: generativegia
 attack_type: gismn
 
 objective:
-  type: euclidean-grad-cossim-posembed
+  type: cosine-similarity
   scale: 1.0 # need to have a much smaller scale like 0.0001 for euclidean objectives
   posembed_scale: 0.1
 
@@ -45,6 +45,6 @@ regularization:
     outer_exp: 1
   l2_regularization:
     scale: 1e-4
-  group_regularization:
-    parallel: true
-    scale: 1e-4
+  # group_regularization:
+  #   parallel: true
+  #   scale: 1e-4
