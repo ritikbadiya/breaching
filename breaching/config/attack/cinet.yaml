@@ -6,9 +6,9 @@ attack_type: cinet
 label-strategy: bias-corrected # yin used in paper, but bias_corrected is better in practice. See the paper for details.
 
 objective:
-  type: cosine-grad-cossim-posembed # cosine-similarity
+  type: euclidean-grad-cossim-posembed # cosine-similarity
   scale: 1.0 # need to have a much smaller scale like 0.0001 for euclidean objectives
-  posembed_scale: 1.0
+  posembed_scale: 0.1
   task_regularization: 0.0
 
 restarts:
@@ -33,5 +33,5 @@ regularization:
     outer_exp: 1
   group_regularization:
     parallel: true
-    scale: 0.0001
+    scale: 0.001
     

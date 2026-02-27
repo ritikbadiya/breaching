@@ -70,17 +70,17 @@ cd "${BASE_DIR}"
 echo "Virtual environment activated successfully."
 
 
-ATTACK=gismn
+ATTACK=semanticsimvpt
 # -----------------------------------------------------------------------------
 # Single run (no loops)
 # -----------------------------------------------------------------------------
 BS=1
-SS=0.1
+SS=0.001
 OS=1.0
-# TV=0.01
+TV=0.1
 PE_SCALE=0.1
 
-JOB_NAME="${ATTACK}_bs${BS}_ss${SS}_os${OS}_tv${TV}_pes${PE_SCALE}"
+JOB_NAME="testing_${ATTACK}_bs${BS}_tv${TV}"
 
 echo "Running single job: $JOB_NAME"
 
@@ -94,23 +94,24 @@ python -c "import torch; print(torch.version.cuda)"
 
 ls -l breaching/attacks/auxiliaries/stylegan_xl/dnnlib/util.py
 
-python benchmark_breaches.py \
+STYLEGANXL_DISABLE_CUSTOM_OPS=1 python benchmark_breaches.py \
     case=1_single_image_small \
     case/data=CIFAR10 \
-    case.model=vit_custom \
-    case.server.pretrained=False \
+    case.model=vit_small \
+    case.server.pretrained=True \
     case.data.batch_size=${BS} \
     case.user.num_data_points='${case.data.batch_size}' \
     attack=${ATTACK} \
-    attack.optim.step_size=${SS} \
-    attack.objective.scale=${OS} \
-    attack.objective.posembed_scale=${PE_SCALE} \
     save_reconstruction=true \
     dryrun=False \
     job_name="${JOB_NAME}" \
-    num_trials=3 \
+    attack.restarts.num_trials=1 \
+    num_trials=1 \
     case.impl.threads=4
 
 echo "Single job finished at $(date)"
 
 # attack.regularization.total_variation.scale=${TV} \
+# attack.optim.step_size=${SS} \
+# attack.objective.scale=${OS} \
+# attack.objective.posembed_scale=${PE_SCALE} \

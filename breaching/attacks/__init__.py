@@ -19,6 +19,8 @@ from .gias_attack import GenImagePriorAttacker
 from .seer_attack import SEERAttacker  # NEW: Import SEER
 
 
+from .gismn_peft_domainalign import SemanticSimilarityBasedLatentCodeAttackerPEFT
+
 def prepare_attack(model, loss, cfg_attack, setup=dict(dtype=torch.float, device=torch.device("cpu"))):
     if cfg_attack.attack_type == "optimization":
         attacker = OptimizationBasedAttacker(model, loss, cfg_attack, setup)
@@ -58,6 +60,8 @@ def prepare_attack(model, loss, cfg_attack, setup=dict(dtype=torch.float, device
         attacker = GenImagePriorAttacker(model, loss, cfg_attack, setup)
     elif cfg_attack.attack_type == "seer":
         attacker = SEERAttacker(model, loss, cfg_attack, setup)
+    elif cfg_attack.attack_type == "ss-peft":
+        attacker = SemanticSimilarityBasedLatentCodeAttackerPEFT(model, loss, cfg_attack, setup)
     else:
         raise ValueError(f"Invalid type of attack {cfg_attack.attack_type} given.")
 

@@ -5,20 +5,20 @@ type: generativegia
 attack_type: gismn
 
 objective:
-  type: euclidean-grad-cossim-posembed
+  type: cosine-similarity
   scale: 1.0 # need to have a much smaller scale like 0.0001 for euclidean objectives
   posembed_scale: 0.1
 
 generator:
-  type: styleganxl
+  # type: styleganxl
   z_dim: 100
   ngf: 64
   nc: 3
   # network_wts: "${hydra:runtime.cwd}/breaching/pretrained/DCGAN/netG_epoch_199.pth"
-  # type: styleganxl
+  type: styleganxl
   network_wts: "${hydra:runtime.cwd}/breaching/pretrained/StyleGANXL/cifar10.pkl"
   # type: biggan
-  # network_wts: "${hydra:runtime.cwd}/breaching/pretrained/BigGAN/biggan-deep-256-pytorch_model.bin"
+  # network_wts: "${hydra:runtime.cwd}/breaching/pretrained/BigGAN/biggan-deep-128-pytorch_model.bin"
   # type: stylegan2
   # network_wts: "${hydra:runtime.cwd}/breaching/pretrained/StyleGAN2/cifar10.pkl"
 
@@ -45,6 +45,6 @@ regularization:
     outer_exp: 1
   l2_regularization:
     scale: 1e-4
-  group_regularization:
-    parallel: true
-    scale: 1e-4
+  # group_regularization:
+  #   parallel: true
+  #   scale: 1e-4
