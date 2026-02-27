@@ -94,7 +94,7 @@ def build_stylegan2_ada_generator(
         init_kwargs.update(common_kwargs)
     return stylegan2_ada_dnnlib.util.construct_class_by_name(**init_kwargs).to(device).eval()
 
-class SemanticSimilarityBasedLatentCodeAttackerVPT(OptimizationBasedAttacker):
+class SemanticSimilarityBasedLatentCodeAttackerPEFT(OptimizationBasedAttacker):
     """Implements an optimization-based attack that only recovers the patch information 
     by opyimization L2 loss on the the parameter gradients.
     And also optimizes the cosine similarity loss on the PosEmbed gradients
