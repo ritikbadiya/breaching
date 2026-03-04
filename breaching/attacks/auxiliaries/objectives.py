@@ -271,16 +271,19 @@ class EuclideanGradCosSimPosEmbed(GradientLoss):
         self.scale = scale
         self.task_regularization = task_regularization
         self.posembed_scale = posembed_scale
+        self.pop_index = kwargs.get("pop_index", 1)
+        # vpt: 2, lora: 0, full: 1
 
     def gradient_based_loss(self, gradient_rec, gradient_data):
         gradient_rec = list(gradient_rec)
         gradient_data = list(gradient_data)
         # log.info(f"grad-rec: {len(gradient_rec)}, grad-data: {len(gradient_data)}")
-        posembed_rec = gradient_rec.pop(1)
-        posembed_data = gradient_data.pop(1)
+        posembed_rec = gradient_rec.pop(self.pop_index)
+        posembed_data = gradient_data.pop(self.pop_index)
         # log.info(f"grad-rec: {len(gradient_rec)}, grad-data: {len(gradient_data)}")
-        return self._euclidean(gradient_rec, gradient_data) * self.scale \
-            + self._cosine_sim(posembed_rec, posembed_data) * self.posembed_scale
+        euc_grad = self._euclidean(gradient_rec, gradient_data)
+        pos_grad = self._cosine_sim(posembed_rec, posembed_data)
+        return euc_grad * self.scale + pos_grad * self.posembed_scale
 
     def __repr__(self):
         return f"Euclidean with scale={self.scale} and Cosine Similarity for PosEmbed with scale={self.posembed_scale} and task regularization {self.task_regularization}"
@@ -312,16 +315,17 @@ class CosSimGradCosSimPosEmbed(GradientLoss):
         self.scale = scale
         self.task_regularization = task_regularization
         self.posembed_scale = posembed_scale
+        self.pop_index = kwargs.get("pop_index", 1)
+        # vpt: 2, lora: 0, full: 1
 
     def gradient_based_loss(self, gradient_rec, gradient_data):
         gradient_rec = list(gradient_rec)
         gradient_data = list(gradient_data)
         # log.info(f"grad-rec: {len(gradient_rec)}, grad-data: {len(gradient_data)}")
-        posembed_rec = gradient_rec.pop(1)
-        posembed_data = gradient_data.pop(1)
+        posembed_rec = gradient_rec.pop(self.pop_index)
+        posembed_data = gradient_data.pop(self.pop_index)
         # log.info(f"grad-rec: {len(gradient_rec)}, grad-data: {len(gradient_data)}")
-        return self._cosine_sim(gradient_rec, gradient_data) * self.scale \
-            + self._cosine_sim([posembed_rec], [posembed_data]) * self.posembed_scale
+        return self._cosine_sim(gradient_rec, gradient_data) * self.scale + self._cosine_sim([posembed_rec], [posembed_data]) * self.posembed_scale
             # + self._cosine_sim_layerwise(posembed_rec, posembed_data) * self.posembed_scale
 
     def __repr__(self):

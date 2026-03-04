@@ -19,8 +19,8 @@ class AnalyticAttacker(_BaseAttacker):
 
     Only works for a torch.nn.Sequential model with input-sized FC layers."""
 
-    def __init__(self, model, loss_fn, cfg_attack, setup=dict(dtype=torch.float, device=torch.device("cpu"))):
-        super().__init__(model, loss_fn, cfg_attack, setup)
+    def __init__(self, model, loss_fn, cfg_attack, setup=dict(dtype=torch.float, device=torch.device("cpu")), **kwargs):
+        super().__init__(model, loss_fn, cfg_attack, setup, **kwargs)
 
     def __repr__(self):
         return f"""Attacker (of type {self.__class__.__name__})."""

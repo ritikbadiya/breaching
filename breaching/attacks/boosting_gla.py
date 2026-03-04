@@ -23,8 +23,8 @@ log = logging.getLogger(__name__)
 
 class BoostingGLA(_BaseAttacker):
 
-    def __init__(self, model, loss_fn, cfg_attack, setup=dict(dtype=torch.float, device=torch.device("cpu"))):
-        super().__init__(model, loss_fn, cfg_attack, setup)
+    def __init__(self, model, loss_fn, cfg_attack, setup=dict(dtype=torch.float, device=torch.device("cpu")), **kwargs):
+        super().__init__(model, loss_fn, cfg_attack, setup, **kwargs)
 
         objective_fn = objective_lookup.get(self.cfg.objective.type)
         log.info(f"Using objective function: {self.cfg.objective}")
