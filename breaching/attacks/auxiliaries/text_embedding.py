@@ -2,6 +2,22 @@
 # using a specified text embedding model (e.g., SigLIP, CLIP, ALIGN). 
 # This can be used to analyze how closely the class names from the two datasets are represented in the embedding space, 
 # which may have implications for transfer learning and domain adaptation in the context of the GISMN attack.
+
+################ To Prevent MUTEX Error ################
+# The following environment variables are set to prevent potential MUTEX errors that can arise when using certain transformer models in a multi-threaded or multi-process environment.
+# Setting "TRANSFORMERS_NO_TF" to "1" disables TensorFlow support in the Hugging Face Transformers library, which can help avoid conflicts if TensorFlow is not needed.
+# Setting "USE_TF" to "0" explicitly tells the library not to use TensorFlow, which can further reduce the chances of encountering MUTEX errors related to TensorFlow's global state.
+# Not required on Linux, but can be helpful on Windows or in certain environments where TensorFlow's threading model may cause issues.
+import os
+import sys
+
+# On macOS/Windows, prevent transformers from loading TensorFlow/Keras to avoid
+# pyarrow-related mutex crashes. Linux environments typically don't need this.
+if sys.platform.startswith("darwin") or sys.platform.startswith("win"):
+    os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
+    os.environ.setdefault("USE_TF", "0")
+########################################################
+
 from transformers import CLIPTokenizer, CLIPTextModel
 from transformers import AutoTokenizer, AutoModel
 from transformers import AlignModel, AlignTextModel
