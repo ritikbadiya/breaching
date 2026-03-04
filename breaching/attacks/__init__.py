@@ -1,65 +1,42 @@
 """Load attacker code and instantiate appropriate objects."""
+import importlib
 import torch
 
-from .optimization_based_attack import OptimizationBasedAttacker
-from .optimization_based_april import OptimizationAprilAttacker
-from .multiscale_optimization_attack import MultiScaleOptimizationAttacker
-from .optimization_with_label_attack import OptimizationJointAttacker
-from .optimization_permutation_attack import OptimizationPermutationAttacker
-from .analytic_attack import AnalyticAttacker, ImprintAttacker, DecepticonAttacker, AprilAttacker
-from .recursive_attack import RecursiveAttacker
-# from .gradvit import GradVit
-from .nonlinear_surrogateme import NonLinearSurrogateModelExtension
-from .boosting_gla import BoostingGLA
-from .gan_gradmatching_based_attack import GANGradMatchingAttacker
-from .girg_attack import ConditionalGANGradMatchingAttacker
-from .cgir_attack import ConditionalGenInstRecAttacker
-from .gismn_attack import GenerativeStyleMigrationAttacker
-from .gias_attack import GenImagePriorAttacker
+# Lazily import attack implementations to avoid importing heavy optional
+# dependencies (e.g., transformers/keras/pyarrow) unless they are needed.
+_ATTACK_REGISTRY = {
+    "optimization": (".optimization_based_attack", "OptimizationBasedAttacker"),
+    "multiscale": (".multiscale_optimization_attack", "MultiScaleOptimizationAttacker"),
+    "april-optimization": (".optimization_based_april", "OptimizationAprilAttacker"),
+    "analytic": (".analytic_attack", "AnalyticAttacker"),
+    "april-analytic": (".analytic_attack", "AprilAttacker"),
+    "imprint-readout": (".analytic_attack", "ImprintAttacker"),
+    "decepticon-readout": (".analytic_attack", "DecepticonAttacker"),
+    "recursive": (".recursive_attack", "RecursiveAttacker"),
+    "joint-optimization": (".optimization_with_label_attack", "OptimizationJointAttacker"),
+    "permutation-optimization": (".optimization_permutation_attack", "OptimizationPermutationAttacker"),
+    "nl-sme": (".nonlinear_surrogateme", "NonLinearSurrogateModelExtension"),
+    "boosting-gla": (".boosting_gla", "BoostingGLA"),
+    "cinet": (".gan_gradmatching_based_attack", "GANGradMatchingAttacker"),
+    "girg": (".girg_attack", "ConditionalGANGradMatchingAttacker"),
+    "cgir": (".cgir_attack", "ConditionalGenInstRecAttacker"),
+    "gismn": (".gismn_attack", "GenerativeStyleMigrationAttacker"),
+    "gias": (".gias_attack", "GenImagePriorAttacker"),
+    "ss-peft": (".gismn_peft_domainalign", "SemanticSimilarityBasedLatentCodeAttackerPEFT"),
+}
 
-from .gismn_peft_domainalign import SemanticSimilarityBasedLatentCodeAttackerPEFT
+
+def _load_attacker(attack_type: str):
+    entry = _ATTACK_REGISTRY.get(attack_type)
+    if entry is None:
+        raise ValueError(f"Invalid type of attack {attack_type} given.")
+    module_name, class_name = entry
+    module = importlib.import_module(module_name, package=__name__)
+    return getattr(module, class_name)
 
 def prepare_attack(model, loss, cfg_attack, setup=dict(dtype=torch.float, device=torch.device("cpu"))):
-    if cfg_attack.attack_type == "optimization":
-        attacker = OptimizationBasedAttacker(model, loss, cfg_attack, setup)
-    elif cfg_attack.attack_type == "multiscale":
-        attacker = MultiScaleOptimizationAttacker(model, loss, cfg_attack, setup)
-    elif cfg_attack.attack_type == "april-optimization":
-        attacker = OptimizationAprilAttacker(model, loss, cfg_attack, setup)
-    elif cfg_attack.attack_type == "analytic":
-        attacker = AnalyticAttacker(model, loss, cfg_attack, setup)
-    elif cfg_attack.attack_type == "april-analytic":
-        attacker = AprilAttacker(model, loss, cfg_attack, setup)
-    elif cfg_attack.attack_type == "imprint-readout":
-        attacker = ImprintAttacker(model, loss, cfg_attack, setup)
-    elif cfg_attack.attack_type == "decepticon-readout":
-        attacker = DecepticonAttacker(model, loss, cfg_attack, setup)
-    elif cfg_attack.attack_type == "recursive":
-        attacker = RecursiveAttacker(model, loss, cfg_attack, setup)
-    elif cfg_attack.attack_type == "joint-optimization":
-        attacker = OptimizationJointAttacker(model, loss, cfg_attack, setup)
-    elif cfg_attack.attack_type == "permutation-optimization":
-        attacker = OptimizationPermutationAttacker(model, loss, cfg_attack, setup)
-    # elif cfg_attack.attack_type == "gradvit":
-    #     attacker = GradVit(model, loss, cfg_attack, setup)
-    elif cfg_attack.attack_type == "nl-sme":
-        attacker = NonLinearSurrogateModelExtension(model, loss, cfg_attack, setup)
-    elif cfg_attack.attack_type == "boosting-gla":
-        attacker = BoostingGLA(model, loss, cfg_attack, setup)
-    elif cfg_attack.attack_type == "cinet":
-        attacker = GANGradMatchingAttacker(model, loss, cfg_attack, setup)
-    elif cfg_attack.attack_type == "girg":
-        attacker = ConditionalGANGradMatchingAttacker(model, loss, cfg_attack, setup)
-    elif cfg_attack.attack_type == "cgir":
-        attacker = ConditionalGenInstRecAttacker(model, loss, cfg_attack, setup)
-    elif cfg_attack.attack_type == "gismn":
-        attacker = GenerativeStyleMigrationAttacker(model, loss, cfg_attack, setup)
-    elif cfg_attack.attack_type == "gias":
-        attacker = GenImagePriorAttacker(model, loss, cfg_attack, setup)
-    elif cfg_attack.attack_type == "ss-peft":
-        attacker = SemanticSimilarityBasedLatentCodeAttackerPEFT(model, loss, cfg_attack, setup)
-    else:
-        raise ValueError(f"Invalid type of attack {cfg_attack.attack_type} given.")
+    attacker_cls = _load_attacker(cfg_attack.attack_type)
+    attacker = attacker_cls(model, loss, cfg_attack, setup)
 
     return attacker
 
