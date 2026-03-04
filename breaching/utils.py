@@ -324,7 +324,7 @@ def save_reconstruction(
                 None,
                 labels,
                 filepath,
-                top_title="Reconstructed",
+                top_title="Rec", #onstructed",
             )
         else:
             _save_titled_image_grid(
@@ -332,51 +332,77 @@ def save_reconstruction(
                 ground_truth_denormalized,
                 labels,
                 filepath,
-                top_title="Reconstructed",
-                bottom_title="Ground Truth",
+                top_title="Rec",
+                bottom_title="GT",
             )
 
 
 def _save_titled_image_grid(rec_images, gt_images, labels, filepath, top_title, bottom_title=None):
-    """Save a grid image with row titles and per-image labels."""
+    """Save a grid image with per-image top labels and side-by-side GT/Reconstruction."""
     from PIL import Image, ImageDraw, ImageFont
 
     padding = 2
-    if gt_images is None:
-        grid = torchvision.utils.make_grid(rec_images, nrow=rec_images.shape[0], padding=padding)
-    else:
-        combined = torch.cat([rec_images, gt_images], dim=0)
-        grid = torchvision.utils.make_grid(combined, nrow=rec_images.shape[0], padding=padding)
+    rec_label = top_title or "Rec"
+    gt_label = bottom_title or "GT"
 
-    grid_img = torchvision.transforms.functional.to_pil_image(grid)
-    grid_w, grid_h = grid_img.size
-    left_margin = 120
-    top_margin = 24
-    bottom_margin = 24 if labels else 8
-    canvas = Image.new("RGB", (grid_w + left_margin, grid_h + top_margin + bottom_margin), (255, 255, 255))
-    canvas.paste(grid_img, (left_margin, top_margin))
+    rec_pil = [torchvision.transforms.functional.to_pil_image(img) for img in rec_images]
+    gt_pil = None
+    if gt_images is not None:
+        gt_pil = [torchvision.transforms.functional.to_pil_image(img) for img in gt_images]
 
+    img_w, img_h = rec_pil[0].size
+    n = len(rec_pil)
+    cols_per_item = 2 if gt_pil is not None else 1
+    total_cols = n * cols_per_item
+
+    grid_w = total_cols * img_w + (total_cols + 1) * padding
+    grid_h = img_h + 2 * padding
+    top_margin = 24 if labels else 8
+    bottom_margin = 24
+    canvas = Image.new("RGB", (grid_w, grid_h + top_margin + bottom_margin), (255, 255, 255))
     draw = ImageDraw.Draw(canvas)
-    font = ImageFont.load_default()
+    # Use a TrueType font to avoid pixelated bitmap rendering.
+    font_size = max(10, img_h // 20)
+    try:
+        font = ImageFont.truetype("DejaVuSans.ttf", font_size)
+    except OSError:
+        font = ImageFont.load_default()
 
-    # Row titles (left side)
-    img_h = rec_images.shape[-2]
-    img_w = rec_images.shape[-1]
-    row0_y = top_margin + padding + img_h // 2
-    draw.text((10, row0_y - 6), top_title, fill=(0, 0, 0), font=font)
-    if bottom_title is not None:
-        row1_y = top_margin + padding + img_h + padding + img_h // 2
-        draw.text((10, row1_y - 6), bottom_title, fill=(0, 0, 0), font=font)
+    def _text_width(text):
+        if hasattr(draw, "textlength"):
+            return draw.textlength(text, font=font)
+        return len(text) * 6
 
-    # Per-image labels under columns
+    # Paste images
+    y0 = top_margin + padding
+    for idx in range(n):
+        base_col = idx * cols_per_item
+        x_rec = padding + base_col * (img_w + padding)
+        canvas.paste(rec_pil[idx], (x_rec, y0))
+        if gt_pil is not None:
+            x_gt = padding + (base_col + 1) * (img_w + padding)
+            canvas.paste(gt_pil[idx], (x_gt, y0))
+
+    # Top labels (per image/pair)
     if labels:
         for idx, label in enumerate(labels):
             label_text = f"Label: {label}"
-            x = left_margin + padding + idx * (img_w + padding)
-            text_w = draw.textlength(label_text, font=font) if hasattr(draw, "textlength") else len(label_text) * 6
-            label_x = x + (img_w - text_w) / 2
-            label_y = top_margin + grid_h + 2
-            draw.text((label_x, label_y), label_text, fill=(0, 0, 0), font=font)
+            pair_x = padding + (idx * cols_per_item) * (img_w + padding)
+            pair_w = cols_per_item * img_w + (cols_per_item - 1) * padding
+            label_x = pair_x + (pair_w - _text_width(label_text)) / 2
+            draw.text((label_x, 2), label_text, fill=(0, 0, 0), font=font)
+
+    # Bottom labels (under each image)
+    label_y = top_margin + grid_h + 2
+    for idx in range(n):
+        base_col = idx * cols_per_item
+        x_rec = padding + base_col * (img_w + padding)
+        rec_x = x_rec + (img_w - _text_width(rec_label)) / 2
+        draw.text((rec_x, label_y), rec_label, fill=(0, 0, 0), font=font)
+        if gt_pil is not None:
+            x_gt = padding + (base_col + 1) * (img_w + padding)
+            gt_x = x_gt + (img_w - _text_width(gt_label)) / 2
+            draw.text((gt_x, label_y), gt_label, fill=(0, 0, 0), font=font)
 
     canvas.save(filepath)
 
