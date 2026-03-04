@@ -22,7 +22,7 @@ class _BaseAttacker:
     A basic assumption for this attacker is that user data is fixed over multiple queries.
     """
 
-    def __init__(self, model, loss_fn, cfg_attack, setup=dict(dtype=torch.float, device=torch.device("cpu"))):
+    def __init__(self, model, loss_fn, cfg_attack, setup=dict(dtype=torch.float, device=torch.device("cpu")), **kwargs):
         self.cfg = cfg_attack
         self.memory_format = torch.channels_last if cfg_attack.impl.mixed_precision else torch.contiguous_format
         self.setup = dict(device=setup["device"], dtype=getattr(torch, cfg_attack.impl.dtype))

@@ -24,7 +24,7 @@ log = logging.getLogger(__name__)
 class OptimizationBasedAttacker(_BaseAttacker):
     """Implements a wide spectrum of optimization-based attacks."""
 
-    def __init__(self, model, loss_fn, cfg_attack, setup=dict(dtype=torch.float, device=torch.device("cpu"))):
+    def __init__(self, model, loss_fn, cfg_attack, setup=dict(dtype=torch.float, device=torch.device("cpu")), **kwargs):
         super().__init__(model, loss_fn, cfg_attack, setup)
         self.parallel_trials = False
         objective_fn = objective_lookup.get(self.cfg.objective.type)
@@ -33,6 +33,19 @@ class OptimizationBasedAttacker(_BaseAttacker):
             raise ValueError(f"Unknown objective type {self.cfg.objective.type} given.")
         else:
             self.objective = objective_fn(**self.cfg.objective)
+            if hasattr(self.objective, 'pop_index'):
+                log.info("The objective function is set to optimize over positional embeddings separately from the rest of the parameters.")
+                # log.warning(f"kwargs is {kwargs}")
+                cfg_peft = kwargs.get("cfg_peft", None)
+                # log.warning(f"cfg_peft is {cfg_peft}")
+                if cfg_peft is not None and cfg_peft.enabled:
+                    self.objective.pop_index = 2 if cfg_peft.type == "vpt" else 0
+                    log.info(f"Based on the peft type {cfg_peft.type}, the objective will pop the gradients at index {self.objective.pop_index} for the posembed optimization.")
+                else:
+                    log.warning("Defaulting to pop_index 1, which may not be correct for all model architectures (CNN).")
+            else:
+                log.info("The objective function optimizes positional embeddings together with the rest of the parameters by default.")
+
         self.regularizers = []
         try:
             for key in self.cfg.regularization.keys():

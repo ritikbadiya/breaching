@@ -5,7 +5,7 @@ The arguments from the default config carry over here.
 """
 
 import hydra
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, open_dict
 
 import datetime
 import time
@@ -23,6 +23,21 @@ def main_process(process_idx, local_group_size, cfg, num_trials=100, job_name=No
     """This function controls the central routine."""
     total_time = time.time()  # Rough time measurements here
     setup = breaching.utils.system_startup(process_idx, local_group_size, cfg)
+
+    # To modify the cfg.case.model to include the posembed_trainable argument from cfg.attack, we need to open the cfg for editing.
+    # To bypass Hydra's immutability, we can use the open_dict context manager. 
+    # This allows us to modify the cfg in-place without creating a new copy.
+    with open_dict(cfg):
+        if isinstance(cfg.case.model, str):
+            # Passing the posembed_trainable argument from attack config to case model config for backward compatibility. 
+            # This is needed for attacks that want to optimize over positional embeddings, 
+            # but the case model config only accepts a boolean for posembed_trainable and not the scale.
+            # Also, in the cfg.case only the model_name is defined, so we need to convert it to a dict for the model constructor.
+            cfg.case.model = {"name": cfg.case.model, 
+                            "posembed_trainable": cfg.attack.objective.posembed_trainable}
+        elif isinstance(cfg.case.model, dict) and "posembed_trainable" not in cfg.case.model:
+            cfg.case.model["posembed_trainable"] = cfg.attack.objective.posembed_trainable
+
     model, loss_fn = breaching.cases.construct_model(
         cfg.case.model,
         cfg.case.data,
@@ -37,7 +52,10 @@ def main_process(process_idx, local_group_size, cfg, num_trials=100, job_name=No
 
     server = breaching.cases.construct_server(model, loss_fn, cfg.case, setup)
     model = server.vet_model(model)
-    attacker = breaching.attacks.prepare_attack(model, loss_fn, cfg.attack, setup)
+    # log.warning(f"PEFT Configuration: {cfg.case.peft}")
+    attacker = breaching.attacks.prepare_attack(model, loss_fn, cfg.attack, setup, cfg_peft=cfg.case.peft) 
+    # Pass the peft type to the attack for it to decide whether to optimize over positional embeddings or not. 
+
     if cfg.case.user.user_idx is not None:
         log.info("The argument user_idx is disregarded during the benchmark. Data selection is fixed.")
     log.info(

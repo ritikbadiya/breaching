@@ -1,7 +1,8 @@
 """Load attacker code and instantiate appropriate objects."""
 import importlib
 import torch
-
+import logging
+log = logging.getLogger(__name__)
 # Lazily import attack implementations to avoid importing heavy optional
 # dependencies (e.g., transformers/keras/pyarrow) unless they are needed.
 _ATTACK_REGISTRY = {
@@ -34,10 +35,10 @@ def _load_attacker(attack_type: str):
     module = importlib.import_module(module_name, package=__name__)
     return getattr(module, class_name)
 
-def prepare_attack(model, loss, cfg_attack, setup=dict(dtype=torch.float, device=torch.device("cpu"))):
+def prepare_attack(model, loss, cfg_attack, setup=dict(dtype=torch.float, device=torch.device("cpu")), **kwargs):
+    # log.warning(f"PEFT Configuration: {kwargs.get('cfg_peft', None)}")
     attacker_cls = _load_attacker(cfg_attack.attack_type)
-    attacker = attacker_cls(model, loss, cfg_attack, setup)
-
+    attacker = attacker_cls(model, loss, cfg_attack, setup, **kwargs)
     return attacker
 
 

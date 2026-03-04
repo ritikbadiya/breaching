@@ -553,7 +553,9 @@ def _adapt_model_with_peft(model, cfg_model, modality="vision", **kwargs):
     posembed_train = _cfg_get(cfg_model, "posembed_trainable", None)
     log.info("Setting ViT positional embedding requires_grad to %s.", posembed_train)
     if posembed_train is not None:
+        # log.info(f"posembed is set to {adapted_backbone.model.pos_embed.requires_grad}.")
         adapted_backbone.model.pos_embed.requires_grad_(posembed_train)
+        # log.info(f"posembed is set to {adapted_backbone.model.pos_embed.requires_grad}.")
     #################################################################################################
     if parent is None:
         return adapted_backbone
