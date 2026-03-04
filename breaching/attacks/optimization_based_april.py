@@ -24,13 +24,6 @@ class OptimizationAprilAttacker(OptimizationBasedAttacker):
     """
     def __init__(self, model, loss_fn, cfg_attack, setup=dict(dtype=torch.float, device=torch.device("cpu")), **kwargs):
         super().__init__(model, loss_fn, cfg_attack, setup, **kwargs)
-        objective_fn = objective_lookup.get(self.cfg.objective.type)
-        # if objective_fn is None:
-        #     raise ValueError(f"Unknown objective type {self.cfg.objective.type} given.")
-        # else:
-        #     self.objective = objective_fn(scale=self.cfg.objective.scale, 
-        #                                 task_regularization=self.cfg.objective.task_regularization,
-        #                                 posembed_scale=self.cfg.objective.posembed_scale)
 
     def _run_trial(self, rec_model, shared_data, labels, stats, trial, initial_data=None, dryrun=False):
         """Run a single reconstruction trial."""
