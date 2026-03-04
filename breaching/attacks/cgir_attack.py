@@ -17,9 +17,73 @@ from .auxiliaries.BigGAN.model import BigGAN, Generator
 from .auxiliaries.BigGAN.config import BigGANConfig, BigGAN32, BigGAN128, BigGAN256, BigGAN512
 from .auxiliaries.BigGAN.utils import truncated_noise_sample, save_as_images, one_hot_from_names, one_hot_from_int
 
+from .auxiliaries.stylegan_xl import legacy, dnnlib
+from .auxiliaries.stylegan_xl.torch_utils import misc
+from .auxiliaries.stylegan2_ada import legacy as stylegan2_ada_legacy, dnnlib as stylegan2_ada_dnnlib
+from .auxiliaries.stylegan2_ada.torch_utils import misc as stylegan2_ada_misc
+
 import logging
 
 log = logging.getLogger(__name__)
+
+def build_stylegan_xl_generator(
+    device,
+    network_pkl=None,
+    class_name='training.networks_stylegan2.Generator',
+    init_kwargs=None,
+    common_kwargs=None,
+):
+    """Construct a StyleGAN-XL generator and optionally load generator-only weights from a pickle."""
+    common_kwargs = common_kwargs or {}
+    if network_pkl is not None:
+        with dnnlib.util.open_url(network_pkl) as f:
+            data = legacy.load_network_pkl(f)
+        src_g = data['G_ema']
+        log.info(f"StyleGAN-XL init_kwargs: {src_g.init_kwargs}")
+        if init_kwargs is None:
+            return src_g.to(device).eval()
+        init_kwargs = dict(init_kwargs)
+        init_kwargs.setdefault('class_name', src_g.init_kwargs.get('class_name', class_name))
+        G = dnnlib.util.construct_class_by_name(**init_kwargs).to(device).eval()
+        misc.copy_params_and_buffers(src_g, G, require_all=False)
+        return G
+
+    if init_kwargs is None:
+        init_kwargs = dict(class_name=class_name, **common_kwargs)
+    else:
+        init_kwargs = dict(init_kwargs)
+        init_kwargs.setdefault('class_name', class_name)
+        init_kwargs.update(common_kwargs)
+    return dnnlib.util.construct_class_by_name(**init_kwargs).to(device).eval()
+
+def build_stylegan2_ada_generator(
+    device,
+    network_pkl=None,
+    class_name='training.networks.Generator',
+    init_kwargs=None,
+    common_kwargs=None,
+):
+    """Construct a StyleGAN2-ADA generator and optionally load generator-only weights from a pickle."""
+    common_kwargs = common_kwargs or {}
+    if network_pkl is not None:
+        with stylegan2_ada_dnnlib.util.open_url(network_pkl) as f:
+            data = stylegan2_ada_legacy.load_network_pkl(f)
+        src_g = data['G_ema']
+        if init_kwargs is None:
+            return src_g.to(device).eval()
+        init_kwargs = dict(init_kwargs)
+        init_kwargs.setdefault('class_name', src_g.init_kwargs.get('class_name', class_name))
+        G = stylegan2_ada_dnnlib.util.construct_class_by_name(**init_kwargs).to(device).eval()
+        stylegan2_ada_misc.copy_params_and_buffers(src_g, G, require_all=False)
+        return G
+
+    if init_kwargs is None:
+        init_kwargs = dict(class_name=class_name, **common_kwargs)
+    else:
+        init_kwargs = dict(init_kwargs)
+        init_kwargs.setdefault('class_name', class_name)
+        init_kwargs.update(common_kwargs)
+    return stylegan2_ada_dnnlib.util.construct_class_by_name(**init_kwargs).to(device).eval()
 
 class ConditionalGenInstRecAttacker(OptimizationBasedAttacker):
     """Implements an optimization-based attack that only recovers the patch information 
@@ -38,16 +102,35 @@ class ConditionalGenInstRecAttacker(OptimizationBasedAttacker):
             
         self.truncation = self.cfg.objective.truncation if hasattr(self.cfg.objective, 'truncation') else 0.4
 
+    def _make_cond_label(self, labels, device, c_dim):
+        if c_dim == 0:
+            return torch.zeros([self.batch_size, 0], device=device)
+        label = one_hot_from_int(labels, batch_size=self.batch_size, num_classes=self.num_classes)
+        return torch.tensor(label, dtype=torch.float, device=device)
+
+    def _generate_candidate(self, netG, noise, labels):
+        if self.cfg.generator.type == "biggan":
+            label = self._make_cond_label(labels, self.setup["device"], self.num_classes)
+            return netG(noise, label, truncation=self.truncation)
+        if self.cfg.generator.type in ("styleganxl", "stylegan_xl"):
+            label = self._make_cond_label(labels, self.setup["device"], netG.c_dim)
+            return netG(noise, label, truncation_psi=self.truncation, noise_mode='random')
+        if self.cfg.generator.type in ("stylegan2", "stylegan2_ada"):
+            label = self._make_cond_label(labels, self.setup["device"], netG.c_dim)
+            return netG(noise, label, truncation_psi=self.truncation, noise_mode='random')
+        raise ValueError(f"Unknown generator type {self.cfg.generator.type}.")
+
     def reconstruct(self, server_payload, shared_data, server_secrets=None, initial_data=None, dryrun=False):
         # Initialize stats module for later usage:
         rec_models, labels, stats = self.prepare_attack(server_payload, shared_data)
         self.num_classes = server_payload[0]["metadata"]["classes"]
         log.info(f"Number of classes in the dataset is {self.num_classes}.")
-        if hasattr(server_payload[0]["metadata"], "name") and "CIFAR" in server_payload[0]["metadata"].name:
-            self.bigganconfig = BigGAN32
-        elif hasattr(server_payload[0]["metadata"], "name") and "ImageNet" in server_payload[0]["metadata"].name:
-            self.bigganconfig = BigGAN256
-        self.bigganconfig.num_classes = self.num_classes
+        if self.cfg.generator.type == "biggan":
+            if hasattr(server_payload[0]["metadata"], "name") and "CIFAR" in server_payload[0]["metadata"].name:
+                self.bigganconfig = BigGAN32
+            elif hasattr(server_payload[0]["metadata"], "name") and "ImageNet" in server_payload[0]["metadata"].name:
+                self.bigganconfig = BigGAN256
+            self.bigganconfig.num_classes = self.num_classes
         
         # Main reconstruction loop starts here:
         scores = torch.zeros(self.cfg.restarts.num_trials)
@@ -83,64 +166,86 @@ class ConditionalGenInstRecAttacker(OptimizationBasedAttacker):
         self.batch_size = shared_data[0]["metadata"]["num_data_points"]
         # GIRG Does not require a pre-trained BigGAN
         # so we can directly use the architecture and randomly initialized weights for the attack
-        self.netG = BigGAN(self.bigganconfig).to(self.setup["device"])
+        if self.cfg.generator.type == "biggan":
+            self.netG = BigGAN(self.bigganconfig).to(self.setup["device"])
+        elif self.cfg.generator.type in ("styleganxl", "stylegan_xl"):
+            log.info(f"Loading StyleGAN-XL generator with weights from {self.cfg.generator.network_wts}")
+            self.netG = build_stylegan_xl_generator(self.setup["device"], network_pkl=self.cfg.generator.network_wts)
+        elif self.cfg.generator.type in ("stylegan2", "stylegan2_ada"):
+            log.info(f"Loading StyleGAN2-ADA generator with weights from {self.cfg.generator.network_wts}")
+            self.netG = build_stylegan2_ada_generator(self.setup["device"], network_pkl=self.cfg.generator.network_wts)
+        else:
+            raise ValueError(f"Unknown generator type {self.cfg.generator.type}.")
         log.info("The number of parameters in the generator is {}".format(sum(p.numel() for p in self.netG.parameters())))
         # log.info(f"self.netG.embeddings.weight.shape = {self.netG.embeddings.weight.shape}")
         for p in self.netG.parameters():
-            p.requires_grad = True
+            p.requires_grad = self.cfg.generator.type == "biggan"
         # Define noise        
-        self.noise = truncated_noise_sample(batch_size=self.batch_size, 
-                                            dim_z=self.netG.config.z_dim, 
-                                            truncation=self.truncation)
+        if self.cfg.generator.type == "biggan":
+            self.noise = truncated_noise_sample(
+                batch_size=self.batch_size,
+                dim_z=self.netG.config.z_dim,
+                truncation=self.truncation,
+            )
+        else:
+            self.noise = truncated_noise_sample(
+                batch_size=self.batch_size,
+                dim_z=self.netG.z_dim,
+                truncation=self.truncation,
+            )
+            self.noise = torch.tensor(self.noise, **self.setup).detach().clone().requires_grad_(True)
         
         minimal_value_so_far = torch.as_tensor(float("inf"), **self.setup)
+        is_stylegan = self.cfg.generator.type in ("styleganxl", "stylegan_xl", "stylegan2", "stylegan2_ada")
         # Initialize optimizers
-        # In GIRG, we optimzie the parameters ofthe Generator network instead of the image pixels directly
-        optimizer, scheduler = self._init_optimizer([p for p in self.netG.parameters()])
+        # In GIRG, we optimzie the parameters of the Generator network instead of the image pixels directly
+        if self.cfg.generator.type == "biggan":
+            optimizer, scheduler = self._init_optimizer([p for p in self.netG.parameters()])
+        else:
+            optimizer, scheduler = self._init_optimizer([self.noise])
         current_wallclock = time.time()
         try:
-            for iteration in range(self.cfg.optim.max_iterations):
-                closure = self._compute_coarse_objective(self.netG, 
-                                                        self.noise,
-                                                        labels, 
-                                                        rec_model, 
-                                                        optimizer, 
-                                                        shared_data, # Contains both gradients and posembed gradients
-                                                        iteration)
-                objective_value, task_loss = optimizer.step(closure), self.current_task_loss
-                scheduler.step()
+            if not is_stylegan:
+                for iteration in range(self.cfg.optim.max_iterations):
+                    closure = self._compute_coarse_objective(self.netG, 
+                                                            self.noise,
+                                                            labels, 
+                                                            rec_model, 
+                                                            optimizer, 
+                                                            shared_data, # Contains both gradients and posembed gradients
+                                                            iteration)
+                    objective_value, task_loss = optimizer.step(closure), self.current_task_loss
+                    scheduler.step()
 
-                with torch.no_grad():
-                    # Project into image space
-                    candidate = self.netG(torch.tensor(self.noise, dtype=torch.float).to(self.setup["device"]), 
-                                          torch.tensor(one_hot_from_int(labels, 
-                                                                        batch_size=self.batch_size, 
-                                                                        num_classes=self.num_classes), 
-                                                        dtype=torch.float).to(self.setup["device"]), 
-                                          self.truncation)
-                    if self.cfg.optim.boxed:
-                        candidate.data = torch.max(torch.min(candidate, (1 - self.dm) / self.ds), -self.dm / self.ds)
-                    if objective_value < minimal_value_so_far:
-                        minimal_value_so_far = objective_value.detach()
-                        best_candidate = candidate.detach().clone()
+                    with torch.no_grad():
+                        # Project into image space
+                        noise_t = self.noise
+                        if not torch.is_tensor(noise_t):
+                            noise_t = torch.tensor(noise_t, dtype=torch.float, device=self.setup["device"])
+                        candidate = self._generate_candidate(self.netG, noise_t, labels)
+                        if self.cfg.optim.boxed:
+                            candidate.data = torch.max(torch.min(candidate, (1 - self.dm) / self.ds), -self.dm / self.ds)
+                        if objective_value < minimal_value_so_far:
+                            minimal_value_so_far = objective_value.detach()
+                            best_candidate = candidate.detach().clone()
 
-                if iteration + 1 == self.cfg.optim.max_iterations or iteration % self.cfg.optim.callback == 0:
-                    timestamp = time.time()
-                    log.info(
-                        f"| It: {iteration + 1} | Rec. loss: {objective_value.item():2.4f} | "
-                        f" Task loss: {task_loss.item():2.4f} | T: {timestamp - current_wallclock:4.2f}s"
-                    )
-                    current_wallclock = timestamp
-                    # log.info("Norm of Generator parameters after {} iters of optimization: {}".format(iteration, sum(p.norm().item() for p in self.netG.parameters())))
+                    if iteration + 1 == self.cfg.optim.max_iterations or iteration % self.cfg.optim.callback == 0:
+                        timestamp = time.time()
+                        log.info(
+                            f"| It: {iteration + 1} | Rec. loss: {objective_value.item():2.4f} | "
+                            f" Task loss: {task_loss.item():2.4f} | T: {timestamp - current_wallclock:4.2f}s"
+                        )
+                        current_wallclock = timestamp
+                        # log.info("Norm of Generator parameters after {} iters of optimization: {}".format(iteration, sum(p.norm().item() for p in self.netG.parameters())))
 
-                if not torch.isfinite(objective_value):
-                    log.info(f"Recovery loss is non-finite in iteration {iteration}. Cancelling reconstruction!")
-                    break
+                    if not torch.isfinite(objective_value):
+                        log.info(f"Recovery loss is non-finite in iteration {iteration}. Cancelling reconstruction!")
+                        break
 
-                stats[f"Trial_{trial}_Val"].append(objective_value.item())
+                    stats[f"Trial_{trial}_Val"].append(objective_value.item())
 
-                if dryrun:
-                    break
+                    if dryrun:
+                        break
             
             ###################################################
             ### FINE LEVEL OPTIMIZATION STARTS HERE  ##########
@@ -148,14 +253,12 @@ class ConditionalGenInstRecAttacker(OptimizationBasedAttacker):
             log.info("Starting fine level optimization for trial {} with the best candidate from coarse optimization.".format(trial))
             for p in self.netG.parameters():
                 p.requires_grad = False
-
+            self.noise = self.noise.requires_grad_(False)
             with torch.no_grad():
-                candidate = self.netG(torch.tensor(self.noise, dtype=torch.float).to(self.setup["device"]), 
-                                            torch.tensor(one_hot_from_int(labels, 
-                                                                            batch_size=self.batch_size, 
-                                                                            num_classes=self.num_classes), 
-                                                            dtype=torch.float).to(self.setup["device"]), 
-                                            self.truncation)
+                noise_t = self.noise
+                if not torch.is_tensor(noise_t):
+                    noise_t = torch.tensor(noise_t, dtype=torch.float, device=self.setup["device"])
+                candidate = self._generate_candidate(self.netG, noise_t, labels)
             
             candidate = candidate.detach().clone()
             candidate = candidate.requires_grad_(requires_grad = True)
@@ -209,12 +312,12 @@ class ConditionalGenInstRecAttacker(OptimizationBasedAttacker):
             optimizer.zero_grad()
             
             # GENERATION
-            label = one_hot_from_int(labels, batch_size=self.batch_size, num_classes=self.num_classes)
-            noise_t = torch.tensor(noise, dtype=torch.float).to(self.setup["device"])
-            label = torch.tensor(label, dtype=torch.float).to(self.setup["device"])
+            noise_t = noise
+            if not torch.is_tensor(noise_t):
+                noise_t = torch.tensor(noise_t, dtype=torch.float, device=self.setup["device"])
             # cond_vector = torch.cat((noise_t, netG.embeddings(label)), dim=1)
             # candidate = netG.generator(cond_vector, self.truncation)
-            candidate = netG(noise_t, label, self.truncation)
+            candidate = self._generate_candidate(netG, noise_t, labels)
             # log.info(f"candidate.shape = {candidate.shape}")
 
             if self.cfg.differentiable_augmentations:
