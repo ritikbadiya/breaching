@@ -1,0 +1,228 @@
+"""This script computes a suite of benchmark numbers for the given attack.
+
+
+The arguments from the default config carry over here.
+"""
+
+import hydra
+from omegaconf import OmegaConf
+
+import datetime
+import time
+import logging
+
+import breaching
+import torch
+
+import os
+
+os.environ["HYDRA_FULL_ERROR"] = "1"  # Enable full Hydra errors for debugging
+log = logging.getLogger(__name__)
+
+
+def main_process(process_idx, local_group_size, cfg, num_trials=100, job_name=None):
+    """This function controls the central routine."""
+    total_time = time.time()  # Rough time measurements here
+    setup = breaching.utils.system_startup(process_idx, local_group_size, cfg)
+    model, loss_fn = breaching.cases.construct_model(
+        cfg.case.model,
+        cfg.case.data,
+        cfg.case.server.pretrained,
+        cfg_case=cfg.case,
+    )
+    log.info(f"Number of Trainable Parameters: {breaching.utils.count_trainable_parameters(model)}")
+
+    if cfg.num_trials is not None:
+        num_trials = cfg.num_trials
+
+    server = breaching.cases.construct_server(model, loss_fn, cfg.case, setup)
+    model = server.vet_model(model)
+    attacker = breaching.attacks.prepare_attack(model, loss_fn, cfg.attack, setup)
+    if cfg.case.user.user_idx is not None:
+        log.info("The argument user_idx is disregarded during the benchmark. Data selection is fixed.")
+    log.info(
+        f"Partitioning is set to {cfg.case.data.partition}. Make sure there exist {num_trials} users in this scheme."
+    )
+
+    # Build a full-dataset view to sample all classes deterministically.
+    class_batches = None
+    class_cursors = None
+    full_dataset = None
+    full_collate_fn = None
+    full_loader_name = None
+    class_to_indices = None
+    if cfg.case.data.modality == "vision":
+        if cfg.case.data.partition != "none":
+            log.info("Overriding data partition to 'none' for all-classes benchmark.")
+            cfg.case.data.partition = "none"
+        full_loader = breaching.cases.data.construct_dataloader(
+            cfg.case.data, cfg.case.impl, user_idx=0, return_full_dataset=True
+        )
+        full_dataset = full_loader.dataset
+        full_collate_fn = full_loader.collate_fn
+        full_loader_name = full_loader.name
+        if hasattr(full_dataset, "classes") and hasattr(full_dataset, "lookup"):
+            num_classes = len(full_dataset.classes)
+            classes = list(range(num_classes))
+            batch_size = max(1, int(cfg.case.user.num_data_points))
+
+            class_to_indices = {c: [] for c in classes}
+            for idx, label in full_dataset.lookup.items():
+                class_to_indices[label].append(idx)
+
+            if batch_size == 1:
+                class_batches = [[c] for c in classes]
+            else:
+                class_batches = [classes[i : i + batch_size] for i in range(0, len(classes), batch_size)]
+                if len(class_batches[-1]) < batch_size:
+                    needed = batch_size - len(class_batches[-1])
+                    class_batches[-1].extend(classes[:needed])
+
+            class_cursors = {c: 0 for c in classes}
+            if num_trials < len(class_batches):
+                log.info(
+                    f"Overriding num_trials from {num_trials} to {len(class_batches)} to cover all classes."
+                )
+                num_trials = len(class_batches)
+        else:
+            log.info("Dataset does not expose classes/lookup. Falling back to default benchmark behavior.")
+
+    cfg.case.user.user_idx = -1
+    run = 0
+    overall_metrics = []
+    while run < num_trials:
+        local_time = time.time()
+        # Select data that has not been seen before:
+        cfg.case.user.user_idx += 1
+        try:
+            user = breaching.cases.construct_user(model, loss_fn, cfg.case, setup)
+            log.info(f"User Batch Size: {user.dataloader.batch_size}") # OK
+        except ValueError:
+            log.info("Cannot find other valid users. Finishing benchmark.")
+            break
+        if class_batches is not None:
+            batch_idx = run % len(class_batches)
+            target_classes = class_batches[batch_idx]
+            selected_indices = []
+            for cls in target_classes:
+                indices = class_to_indices.get(cls, [])
+                if len(indices) == 0:
+                    continue
+                cursor = class_cursors[cls] % len(indices)
+                selected_indices.append(indices[cursor])
+                class_cursors[cls] += 1
+            if len(selected_indices) < int(cfg.case.user.num_data_points):
+                # Pad with additional classes from the start to reach num_data_points.
+                for cls in list(range(len(full_dataset.classes))):
+                    if len(selected_indices) >= int(cfg.case.user.num_data_points):
+                        break
+                    indices = class_to_indices.get(cls, [])
+                    if len(indices) == 0:
+                        continue
+                    cursor = class_cursors[cls] % len(indices)
+                    selected_indices.append(indices[cursor])
+                    class_cursors[cls] += 1
+            subset = torch.utils.data.Subset(full_dataset, selected_indices)
+            sampler = torch.utils.data.SequentialSampler(subset)
+            user.dataloader = torch.utils.data.DataLoader(
+                subset,
+                batch_size=len(subset),
+                sampler=sampler,
+                collate_fn=full_collate_fn,
+                drop_last=False,
+                num_workers=user.dataloader.num_workers,
+                pin_memory=user.dataloader.pin_memory,
+                persistent_workers=user.dataloader.persistent_workers,
+            )
+            user.dataloader.name = full_loader_name or user.dataloader.name
+        if cfg.case.data.modality == "text":
+            dshape = user.dataloader.dataset[0]["input_ids"].shape
+            data_shape_mismatch = any([d != d_ref for d, d_ref in zip(dshape, cfg.case.data.shape)])
+        else:
+            data_shape_mismatch = False  # Handled by preprocessing for images
+        if len(user.dataloader.dataset) < user.num_data_points or data_shape_mismatch:
+            log.info(f"Skipping user {user.user_idx} (has not enough data or data shape mismatch).")
+        else:
+            log.info(f"Now evaluating user {user.user_idx} in trial {run}.")
+            # Run exchange
+            shared_user_data, payloads, true_user_data = server.run_protocol(user)
+            # Evaluate attack:
+            # try:
+            reconstruction, stats = attacker.reconstruct(
+                payloads, shared_user_data, server.secrets, dryrun=cfg.dryrun
+            )
+            # except Exception as e:
+            #     log.info(f"Reconstruction for trial {run} broke down with error {e}.")
+            #     continue
+            try:
+                # Run the full set of metrics:
+                metrics = breaching.analysis.report(
+                    reconstruction,
+                    true_user_data,
+                    payloads,
+                    server.model,
+                    order_batch=True,
+                    compute_full_iip=True,
+                    compute_rpsnr=True,
+                    compute_ssim=True,
+                    cfg_case=cfg.case,
+                    setup=setup,
+                )
+                # Add query metrics
+                metrics["queries"] = user.counted_queries
+
+                # Save local summary:
+                breaching.utils.save_summary(cfg, metrics, stats, time.time() - local_time, original_cwd=False, job_name=job_name)
+                overall_metrics.append(metrics)
+            except Exception as e:
+                log.info(f"Metrics computation for trial {run} broke down with error {e}.")
+                continue
+            try:
+                # Save recovered data:
+                if cfg.save_reconstruction:
+                    breaching.utils.save_reconstruction(reconstruction, payloads, true_user_data, cfg)
+                if cfg.dryrun:
+                    break
+            except Exception as e:  # noqa # yeah we're that close to the deadlines
+                log.info(f"Trial {run} broke down with error {e}.")
+            run += 1
+
+    # Compute average statistics:
+    average_metrics = breaching.utils.avg_n_dicts(overall_metrics)
+
+    # Save global summary:
+    breaching.utils.save_summary(
+        cfg, average_metrics, stats, time.time() - total_time, original_cwd=True, table_name="BENCHMARK_breach", job_name=job_name
+    )
+
+
+@hydra.main(config_path="breaching/config", config_name="cfg", version_base="1.1")
+def main_launcher(cfg):
+    """This is boiler-plate code for the launcher."""
+
+    log.info("--------------------------------------------------------------")
+    log.info("-----Launching federating learning breach experiment! --------")
+
+    launch_time = time.time()
+    if cfg.seed is None:
+        cfg.seed = int.from_bytes(os.urandom(4), "big")  # randomized per run
+
+    # Extract job_name from config if provided
+    job_name = cfg.get("job_name", None)
+    if job_name:
+        log.info(f"Running with job name: {job_name}")
+
+    log.info(OmegaConf.to_yaml(cfg))
+    breaching.utils.initialize_multiprocess_log(cfg)  # manually save log configuration
+    main_process(0, 1, cfg, job_name=job_name)
+
+    log.info("-------------------------------------------------------------")
+    log.info(
+        f"Finished computations {cfg.name} with total train time: "
+        f"{str(datetime.timedelta(seconds=time.time() - launch_time))}"
+    )
+    log.info("-----------------Job finished.-------------------------------")
+
+
+if __name__ == "__main__":
+    main_launcher()
