@@ -357,6 +357,7 @@ class GenImagePriorAttacker(OptimizationBasedAttacker):
                                                         shared_data, # Contains both gradients and posembed gradients
                                                         iteration)
                 objective_value, task_loss = optimizer.step(closure), self.current_task_loss
+                # log.info(f"Objective Value: {objective_value.item():.4f}, Task Loss: {task_loss.item():.4f}")
                 scheduler.step()
 
                 with torch.no_grad():
@@ -502,6 +503,7 @@ class GenImagePriorAttacker(OptimizationBasedAttacker):
 
     def _run_parallel_trials(self, rec_model, shared_data, labels, stats, initial_data, dryrun, num_trials):
         """Run multiple GIAS trials in parallel for parallel regularizers."""
+        # Initialize losses:
         for regularizer in self.regularizers:
             regularizer.initialize(rec_model, shared_data, labels)
         self.objective.initialize(self.loss_fn, self.cfg.impl, shared_data[0]["metadata"]["local_hyperparams"])

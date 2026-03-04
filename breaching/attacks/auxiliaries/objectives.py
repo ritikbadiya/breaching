@@ -234,6 +234,15 @@ class CosineSimilarityLayerWise(GradientLoss):
         self.task_regularization = task_regularization
 
     def gradient_based_loss(self, gradient_rec, gradient_data):
+        # log.info(f"Computing layer-wise cosine similarity. Number of layers: {len(gradient_rec)}")
+        # for rec, data in zip(gradient_rec, gradient_data):
+        #     rec = rec.flatten()
+        #     data = data.flatten()
+        #     scalar_product = (rec * data).sum()
+        #     rec_norm = rec.pow(2).sum() + 1e-4
+        #     data_norm = data.pow(2).sum() + 1e-4
+        #     objective = - scalar_product / (rec_norm.sqrt() * data_norm.sqrt())
+        #     log.info(f"Layer objective: {objective:.4f}, rec norm: {rec_norm:.4f}, data norm: {data_norm:.4f}")
         return self._cosine_sim_layerwise(gradient_rec, gradient_data) * self.scale
 
     def __repr__(self):
@@ -247,10 +256,11 @@ class CosineSimilarityLayerWise(GradientLoss):
             rec = rec.flatten()
             data = data.flatten()
             scalar_product = (rec * data).sum()
-            rec_norm = rec.pow(2).sum()
-            data_norm = data.pow(2).sum()
+            rec_norm = rec.pow(2).sum() + 1e-4
+            data_norm = data.pow(2).sum() + 1e-4
             objective += 1 - scalar_product / (rec_norm.sqrt() * data_norm.sqrt())
         objective /= len(gradient_rec)
+        # objective = 1 - objective
         return objective
 
 class EuclideanGradCosSimPosEmbed(GradientLoss):
@@ -311,7 +321,8 @@ class CosSimGradCosSimPosEmbed(GradientLoss):
         posembed_data = gradient_data.pop(1)
         # log.info(f"grad-rec: {len(gradient_rec)}, grad-data: {len(gradient_data)}")
         return self._cosine_sim(gradient_rec, gradient_data) * self.scale \
-            + self._cosine_sim_layerwise(posembed_rec, posembed_data) * self.posembed_scale
+            + self._cosine_sim([posembed_rec], [posembed_data]) * self.posembed_scale
+            # + self._cosine_sim_layerwise(posembed_rec, posembed_data) * self.posembed_scale
 
     def __repr__(self):
         return f"Cosine Similarity with scale={self.scale} and Cosine Similarity for PosEmbed with scale={self.posembed_scale} and task regularization {self.task_regularization}"

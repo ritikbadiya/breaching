@@ -29,6 +29,7 @@ def main_process(process_idx, local_group_size, cfg, num_trials=100, job_name=No
         cfg.case.server.pretrained,
         cfg_case=cfg.case,
     )
+    log.info(f"Model: {cfg.case.model}")
     log.info(f"Number of Trainable Parameters: {breaching.utils.count_trainable_parameters(model)}")
 
     if cfg.num_trials is not None:
