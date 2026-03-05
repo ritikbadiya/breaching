@@ -27,16 +27,38 @@ def main_process(process_idx, local_group_size, cfg, num_trials=100, job_name=No
     # To modify the cfg.case.model to include the posembed_trainable argument from cfg.attack, we need to open the cfg for editing.
     # To bypass Hydra's immutability, we can use the open_dict context manager. 
     # This allows us to modify the cfg in-place without creating a new copy.
-    with open_dict(cfg):
-        if isinstance(cfg.case.model, str):
-            # Passing the posembed_trainable argument from attack config to case model config for backward compatibility. 
-            # This is needed for attacks that want to optimize over positional embeddings, 
-            # but the case model config only accepts a boolean for posembed_trainable and not the scale.
-            # Also, in the cfg.case only the model_name is defined, so we need to convert it to a dict for the model constructor.
-            cfg.case.model = {"name": cfg.case.model, 
-                            "posembed_trainable": cfg.attack.objective.posembed_trainable}
-        elif isinstance(cfg.case.model, dict) and "posembed_trainable" not in cfg.case.model:
-            cfg.case.model["posembed_trainable"] = cfg.attack.objective.posembed_trainable
+    if hasattr(cfg.attack.objective, "posembed_trainable"):
+        if cfg.attack.objective.posembed_trainable:
+            with open_dict(cfg):
+                if isinstance(cfg.case.model, str):
+                    # Passing the posembed_trainable argument from attack config to case model config for backward compatibility. 
+                    # This is needed for attacks that want to optimize over positional embeddings, 
+                    # but the case model config only accepts a boolean for posembed_trainable and not the scale.
+                    # Also, in the cfg.case only the model_name is defined, so we need to convert it to a dict for the model constructor.
+                    cfg.case.model = {"name": cfg.case.model, 
+                                    "posembed_trainable": cfg.attack.objective.posembed_trainable}
+                elif isinstance(cfg.case.model, dict) and "posembed_trainable" not in cfg.case.model:
+                    cfg.case.model["posembed_trainable"] = cfg.attack.objective.posembed_trainable
+        else:
+            if "posembed" in cfg.attack.objective.type.lower():
+                log.warning("""The argument attack.objective.posembed_trainable is set to False,
+                            but the objective type contains 'posembed'. This might be a configuration error.""")
+                raise ValueError("""The argument attack.objective.posembed_trainable is set to False, but the objective type contains 'posembed'. 
+                                    If attack.objective.posembed_trainable=False is the desired behavior, consider using a different objective type. 
+                                    For example:
+                                    cosine-grad-cossim-posembed -> cosine-similarity
+                                    euclidean-grad-cossim-posembed -> euclidean
+                                    """)
+    else:
+        if "posembed" in cfg.attack.objective.type.lower():
+            log.warning("""The argument attack.objective.posembed_trainable is not set,
+                        but the objective type contains 'posembed'. This might be a configuration error.""")
+            raise ValueError("""The argument attack.objective.posembed_trainable is not set, but the objective type contains 'posembed'. 
+                                If attack.objective.posembed_trainable=False is the desired behavior, consider using a different objective type. 
+                                For example:
+                                cosine-grad-cossim-posembed -> cosine-similarity
+                                euclidean-grad-cossim-posembed -> euclidean
+                                """)
 
     model, loss_fn = breaching.cases.construct_model(
         cfg.case.model,
