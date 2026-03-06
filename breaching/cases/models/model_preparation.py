@@ -152,7 +152,7 @@ class TimmVPTAdapter(nn.Module):
 
     def __init__(
         self,
-        base_model,
+        model,
         num_tokens=5,
         prompt_dropout=0.0,
         prompt_proj_dim=-1,
@@ -161,20 +161,20 @@ class TimmVPTAdapter(nn.Module):
         prompt_mlp_layers=0,
     ):
         super().__init__()
-        self.base_model = base_model
+        self.model = model
         self.num_tokens = int(num_tokens)
         self.deep = bool(deep)
-        self.num_prefix_tokens = int(getattr(base_model, "num_prefix_tokens", 1))
+        self.num_prefix_tokens = int(getattr(model, "num_prefix_tokens", 1))
 
-        for p in self.base_model.parameters():
+        for p in self.model.parameters():
             p.requires_grad = False
-        if not _unfreeze_classifier_head(self.base_model):
+        if not _unfreeze_classifier_head(self.model):
             log.warning("VPT PEFT requested but no classifier head was found to unfreeze.")
 
-        embed_dim = int(getattr(base_model, "embed_dim", getattr(base_model, "num_features")))
+        embed_dim = int(getattr(model, "embed_dim", getattr(model, "num_features")))
         prompt_dim = int(prompt_proj_dim) if prompt_proj_dim is not None and int(prompt_proj_dim) > 0 else embed_dim
 
-        patch_size = getattr(getattr(base_model, "patch_embed", None), "patch_size", (16, 16))
+        patch_size = getattr(getattr(model, "patch_embed", None), "patch_size", (16, 16))
         if isinstance(patch_size, int):
             patch_area = patch_size * patch_size
         else:
@@ -194,7 +194,7 @@ class TimmVPTAdapter(nn.Module):
         self.prompt_dropout = nn.Dropout(float(prompt_dropout)) if prompt_dropout and prompt_dropout > 0 else nn.Identity()
 
         if self.deep:
-            total_layers = len(self.base_model.blocks) - 1
+            total_layers = len(self.model.blocks) - 1
             self.num_deep_layers = int(num_deep_layers) if num_deep_layers is not None else total_layers
             self.num_deep_layers = max(0, min(self.num_deep_layers, total_layers))
             self.deep_prompt_embeddings = nn.Parameter(torch.zeros(self.num_deep_layers, self.num_tokens, prompt_dim))
@@ -228,63 +228,63 @@ class TimmVPTAdapter(nn.Module):
         )
 
     def _pos_embed(self, x):
-        if hasattr(self.base_model, "_pos_embed"):
-            return self.base_model._pos_embed(x)
+        if hasattr(self.model, "_pos_embed"):
+            return self.model._pos_embed(x)
 
         B = x.shape[0]
         prefix = []
-        if hasattr(self.base_model, "cls_token") and self.base_model.cls_token is not None:
-            prefix.append(self.base_model.cls_token.expand(B, -1, -1))
-        if hasattr(self.base_model, "reg_token") and self.base_model.reg_token is not None:
-            prefix.append(self.base_model.reg_token.expand(B, -1, -1))
+        if hasattr(self.model, "cls_token") and self.model.cls_token is not None:
+            prefix.append(self.model.cls_token.expand(B, -1, -1))
+        if hasattr(self.model, "reg_token") and self.model.reg_token is not None:
+            prefix.append(self.model.reg_token.expand(B, -1, -1))
         if len(prefix) > 0:
             x = torch.cat([*prefix, x], dim=1)
-        if hasattr(self.base_model, "pos_embed") and self.base_model.pos_embed is not None:
-            if self.base_model.pos_embed.shape[1] == x.shape[1]:
-                x = x + self.base_model.pos_embed
-        if hasattr(self.base_model, "pos_drop"):
-            x = self.base_model.pos_drop(x)
+        if hasattr(self.model, "pos_embed") and self.model.pos_embed is not None:
+            if self.model.pos_embed.shape[1] == x.shape[1]:
+                x = x + self.model.pos_embed
+        if hasattr(self.model, "pos_drop"):
+            x = self.model.pos_drop(x)
         return x
 
     def _forward_features(self, x):
-        x = self.base_model.patch_embed(x)
+        x = self.model.patch_embed(x)
         x = self._pos_embed(x)
 
-        if hasattr(self.base_model, "patch_drop"):
-            x = self.base_model.patch_drop(x)
-        if hasattr(self.base_model, "norm_pre"):
-            x = self.base_model.norm_pre(x)
+        if hasattr(self.model, "patch_drop"):
+            x = self.model.patch_drop(x)
+        if hasattr(self.model, "norm_pre"):
+            x = self.model.norm_pre(x)
 
         B = x.shape[0]
         shallow_prompt = self._transform_prompt(self.prompt_embeddings).expand(B, -1, -1)
         x = self._insert_prompts(x, shallow_prompt)
 
-        for idx, block in enumerate(self.base_model.blocks):
+        for idx, block in enumerate(self.model.blocks):
             if self.deep_prompt_embeddings is not None and idx > 0 and (idx - 1) < self.deep_prompt_embeddings.shape[0]:
                 deep_prompt = self._transform_prompt(self.deep_prompt_embeddings[idx - 1]).expand(B, -1, -1)
                 x = self._insert_prompts(self._strip_prompts(x), deep_prompt)
             x = block(x)
 
         x = self._strip_prompts(x)
-        if hasattr(self.base_model, "norm"):
-            x = self.base_model.norm(x)
+        if hasattr(self.model, "norm"):
+            x = self.model.norm(x)
         return x
 
     def forward(self, x):
         x = self._forward_features(x)
-        if hasattr(self.base_model, "forward_head"):
-            return self.base_model.forward_head(x)
+        if hasattr(self.model, "forward_head"):
+            return self.model.forward_head(x)
         if x.ndim == 3:
-            if getattr(self.base_model, "global_pool", "") == "avg":
+            if getattr(self.model, "global_pool", "") == "avg":
                 x = x[:, self.num_prefix_tokens :, :].mean(dim=1)
             else:
                 x = x[:, 0]
-        if hasattr(self.base_model, "fc_norm") and self.base_model.fc_norm is not None:
-            x = self.base_model.fc_norm(x)
-        if hasattr(self.base_model, "head_drop"):
-            x = self.base_model.head_drop(x)
-        if hasattr(self.base_model, "head"):
-            x = self.base_model.head(x)
+        if hasattr(self.model, "fc_norm") and self.model.fc_norm is not None:
+            x = self.model.fc_norm(x)
+        if hasattr(self.model, "head_drop"):
+            x = self.model.head_drop(x)
+        if hasattr(self.model, "head"):
+            x = self.model.head(x)
         return x
 
     def shared_parameters(self):
@@ -294,7 +294,7 @@ class TimmVPTAdapter(nn.Module):
         if self.deep_prompt_embeddings is not None:
             params.append(self.deep_prompt_embeddings)
         # Include any trainable base model params (e.g., classification head).
-        params += [p for p in self.base_model.parameters() if p.requires_grad]
+        params += [p for p in self.model.parameters() if p.requires_grad]
         return params
 
 
@@ -306,10 +306,10 @@ class CNNPromptTuningAdapter(nn.Module):
     The backbone CNN is frozen.
     """
 
-    def __init__(self, base_model, image_size, prompt_size=4):
+    def __init__(self, model, image_size, prompt_size=4):
         """
         Args:
-            base_model: pretrained CNN
+            model: pretrained CNN
             image_size: (C, H, W)
             prompt_size: number of pixels to pad on each side
         """
@@ -320,7 +320,7 @@ class CNNPromptTuningAdapter(nn.Module):
         if int(prompt_size) < 0:
             raise ValueError("prompt_size must be non-negative.")
 
-        self.base_model = base_model
+        self.model = model
         self.prompt_size = int(prompt_size)
 
         C, H, W = [int(v) for v in image_size]
@@ -331,10 +331,10 @@ class CNNPromptTuningAdapter(nn.Module):
         self.W = W
 
         # Freeze backbone
-        for p in self.base_model.parameters():
+        for p in self.model.parameters():
             p.requires_grad = False
         # Keep stateful layers (e.g., BatchNorm) fixed during adapter training.
-        self.base_model.eval()
+        self.model.eval()
 
         # Learnable border prompt over padded canvas.
         self.prompt = nn.Parameter(
@@ -350,7 +350,7 @@ class CNNPromptTuningAdapter(nn.Module):
 
     def train(self, mode=True):
         super().train(mode)
-        self.base_model.eval()
+        self.model.eval()
         return self
 
     def forward(self, x):
@@ -375,7 +375,7 @@ class CNNPromptTuningAdapter(nn.Module):
         padded = prompt.clone()
         padded[:, :, p : p + self.H, p : p + self.W] = x
 
-        return self.base_model(padded)
+        return self.model(padded)
 
     def shared_parameters(self):
         return [self.prompt]
@@ -548,7 +548,15 @@ def _adapt_model_with_peft(model, cfg_model, modality="vision", **kwargs):
         adapted_backbone = _apply_lora_to_vit(backbone, peft_cfg)
     else:
         raise ValueError(f"Unknown PEFT type {peft_type}.")
-
+    
+    # Can set the positional embedding to be trainable or not (default is not trainable for ViT PEFT):
+    posembed_train = _cfg_get(cfg_model, "posembed_trainable", None)
+    log.info("Setting ViT positional embedding requires_grad to %s.", posembed_train)
+    if posembed_train is not None:
+        # log.info(f"posembed is set to {adapted_backbone.model.pos_embed.requires_grad}.")
+        adapted_backbone.model.pos_embed.requires_grad_(posembed_train)
+        # log.info(f"posembed is set to {adapted_backbone.model.pos_embed.requires_grad}.")
+    #################################################################################################
     if parent is None:
         return adapted_backbone
     parent.model = adapted_backbone
@@ -986,6 +994,7 @@ def _construct_vision_model(cfg_model, cfg_data, pretrained=True, **kwargs):
             raise ValueError("Model could not be found.")
 
     model = _adapt_model_with_peft(model, raw_cfg_model, modality="vision", cfg_data=cfg_data, **kwargs)
+    
     return VisionContainer(model)
 
 

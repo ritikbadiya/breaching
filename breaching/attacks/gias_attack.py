@@ -133,16 +133,8 @@ class GenImagePriorAttacker(OptimizationBasedAttacker):
     by opyimization L2 loss on the the parameter gradients.
     And also optimizes the cosine similarity loss on the PosEmbed gradients
     """
-    def __init__(self, model, loss_fn, cfg_attack, setup=dict(dtype=torch.float, device=torch.device("cpu"))):
-        super().__init__(model, loss_fn, cfg_attack, setup)
-        objective_fn = objective_lookup.get(self.cfg.objective.type)
-        if objective_fn is None:
-            raise ValueError(f"Unknown objective type {self.cfg.objective.type} given.")
-        else:
-            self.objective = objective_fn(scale=self.cfg.objective.scale, 
-                                        task_regularization=self.cfg.objective.task_regularization,
-                                        posembed_scale=self.cfg.objective.posembed_scale)
-            
+    def __init__(self, model, loss_fn, cfg_attack, setup=dict(dtype=torch.float, device=torch.device("cpu")), **kwargs):
+        super().__init__(model, loss_fn, cfg_attack, setup, **kwargs)
         self.truncation = self.cfg.objective.truncation if hasattr(self.cfg.objective, 'truncation') else 0.4
         self._biggan_weights_path = None
         self._biggan_state_dict = None
@@ -357,6 +349,7 @@ class GenImagePriorAttacker(OptimizationBasedAttacker):
                                                         shared_data, # Contains both gradients and posembed gradients
                                                         iteration)
                 objective_value, task_loss = optimizer.step(closure), self.current_task_loss
+                # log.info(f"Objective Value: {objective_value.item():.4f}, Task Loss: {task_loss.item():.4f}")
                 scheduler.step()
 
                 with torch.no_grad():
@@ -502,6 +495,7 @@ class GenImagePriorAttacker(OptimizationBasedAttacker):
 
     def _run_parallel_trials(self, rec_model, shared_data, labels, stats, initial_data, dryrun, num_trials):
         """Run multiple GIAS trials in parallel for parallel regularizers."""
+        # Initialize losses:
         for regularizer in self.regularizers:
             regularizer.initialize(rec_model, shared_data, labels)
         self.objective.initialize(self.loss_fn, self.cfg.impl, shared_data[0]["metadata"]["local_hyperparams"])

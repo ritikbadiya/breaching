@@ -5,13 +5,14 @@ The arguments from the default config carry over here.
 """
 
 import hydra
-from omegaconf import OmegaConf, open_dict
+from omegaconf import OmegaConf
 
 import datetime
 import time
 import logging
 
 import breaching
+import torch
 
 import os
 
@@ -23,50 +24,12 @@ def main_process(process_idx, local_group_size, cfg, num_trials=100, job_name=No
     """This function controls the central routine."""
     total_time = time.time()  # Rough time measurements here
     setup = breaching.utils.system_startup(process_idx, local_group_size, cfg)
-
-    # To modify the cfg.case.model to include the posembed_trainable argument from cfg.attack, we need to open the cfg for editing.
-    # To bypass Hydra's immutability, we can use the open_dict context manager. 
-    # This allows us to modify the cfg in-place without creating a new copy.
-    if hasattr(cfg.attack.objective, "posembed_trainable"):
-        if cfg.attack.objective.posembed_trainable:
-            with open_dict(cfg):
-                if isinstance(cfg.case.model, str):
-                    # Passing the posembed_trainable argument from attack config to case model config for backward compatibility. 
-                    # This is needed for attacks that want to optimize over positional embeddings, 
-                    # but the case model config only accepts a boolean for posembed_trainable and not the scale.
-                    # Also, in the cfg.case only the model_name is defined, so we need to convert it to a dict for the model constructor.
-                    cfg.case.model = {"name": cfg.case.model, 
-                                    "posembed_trainable": cfg.attack.objective.posembed_trainable}
-                elif isinstance(cfg.case.model, dict) and "posembed_trainable" not in cfg.case.model:
-                    cfg.case.model["posembed_trainable"] = cfg.attack.objective.posembed_trainable
-        else:
-            if "posembed" in cfg.attack.objective.type.lower():
-                log.warning("""The argument attack.objective.posembed_trainable is set to False,
-                            but the objective type contains 'posembed'. This might be a configuration error.""")
-                raise ValueError("""The argument attack.objective.posembed_trainable is set to False, but the objective type contains 'posembed'. 
-                                    If attack.objective.posembed_trainable=False is the desired behavior, consider using a different objective type. 
-                                    For example:
-                                    cosine-grad-cossim-posembed -> cosine-similarity
-                                    euclidean-grad-cossim-posembed -> euclidean
-                                    """)
-    else:
-        if "posembed" in cfg.attack.objective.type.lower():
-            log.warning("""The argument attack.objective.posembed_trainable is not set,
-                        but the objective type contains 'posembed'. This might be a configuration error.""")
-            raise ValueError("""The argument attack.objective.posembed_trainable is not set, but the objective type contains 'posembed'. 
-                                If attack.objective.posembed_trainable=False is the desired behavior, consider using a different objective type. 
-                                For example:
-                                cosine-grad-cossim-posembed -> cosine-similarity
-                                euclidean-grad-cossim-posembed -> euclidean
-                                """)
-
     model, loss_fn = breaching.cases.construct_model(
         cfg.case.model,
         cfg.case.data,
         cfg.case.server.pretrained,
         cfg_case=cfg.case,
     )
-    log.info(f"Model: {cfg.case.model}")
     log.info(f"Number of Trainable Parameters: {breaching.utils.count_trainable_parameters(model)}")
 
     if cfg.num_trials is not None:
@@ -74,15 +37,55 @@ def main_process(process_idx, local_group_size, cfg, num_trials=100, job_name=No
 
     server = breaching.cases.construct_server(model, loss_fn, cfg.case, setup)
     model = server.vet_model(model)
-    # log.warning(f"PEFT Configuration: {cfg.case.peft}")
-    attacker = breaching.attacks.prepare_attack(model, loss_fn, cfg.attack, setup, cfg_peft=cfg.case.peft) 
-    # Pass the peft type to the attack for it to decide whether to optimize over positional embeddings or not. 
-
+    attacker = breaching.attacks.prepare_attack(model, loss_fn, cfg.attack, setup)
     if cfg.case.user.user_idx is not None:
         log.info("The argument user_idx is disregarded during the benchmark. Data selection is fixed.")
     log.info(
         f"Partitioning is set to {cfg.case.data.partition}. Make sure there exist {num_trials} users in this scheme."
     )
+
+    # Build a full-dataset view to sample all classes deterministically.
+    class_batches = None
+    class_cursors = None
+    full_dataset = None
+    full_collate_fn = None
+    full_loader_name = None
+    class_to_indices = None
+    if cfg.case.data.modality == "vision":
+        if cfg.case.data.partition != "none":
+            log.info("Overriding data partition to 'none' for all-classes benchmark.")
+            cfg.case.data.partition = "none"
+        full_loader = breaching.cases.data.construct_dataloader(
+            cfg.case.data, cfg.case.impl, user_idx=0, return_full_dataset=True
+        )
+        full_dataset = full_loader.dataset
+        full_collate_fn = full_loader.collate_fn
+        full_loader_name = full_loader.name
+        if hasattr(full_dataset, "classes") and hasattr(full_dataset, "lookup"):
+            num_classes = len(full_dataset.classes)
+            classes = list(range(num_classes))
+            batch_size = max(1, int(cfg.case.user.num_data_points))
+
+            class_to_indices = {c: [] for c in classes}
+            for idx, label in full_dataset.lookup.items():
+                class_to_indices[label].append(idx)
+
+            if batch_size == 1:
+                class_batches = [[c] for c in classes]
+            else:
+                class_batches = [classes[i : i + batch_size] for i in range(0, len(classes), batch_size)]
+                if len(class_batches[-1]) < batch_size:
+                    needed = batch_size - len(class_batches[-1])
+                    class_batches[-1].extend(classes[:needed])
+
+            class_cursors = {c: 0 for c in classes}
+            if num_trials < len(class_batches):
+                log.info(
+                    f"Overriding num_trials from {num_trials} to {len(class_batches)} to cover all classes."
+                )
+                num_trials = len(class_batches)
+        else:
+            log.info("Dataset does not expose classes/lookup. Falling back to default benchmark behavior.")
 
     cfg.case.user.user_idx = -1
     run = 0
@@ -97,6 +100,41 @@ def main_process(process_idx, local_group_size, cfg, num_trials=100, job_name=No
         except ValueError:
             log.info("Cannot find other valid users. Finishing benchmark.")
             break
+        if class_batches is not None:
+            batch_idx = run % len(class_batches)
+            target_classes = class_batches[batch_idx]
+            selected_indices = []
+            for cls in target_classes:
+                indices = class_to_indices.get(cls, [])
+                if len(indices) == 0:
+                    continue
+                cursor = class_cursors[cls] % len(indices)
+                selected_indices.append(indices[cursor])
+                class_cursors[cls] += 1
+            if len(selected_indices) < int(cfg.case.user.num_data_points):
+                # Pad with additional classes from the start to reach num_data_points.
+                for cls in list(range(len(full_dataset.classes))):
+                    if len(selected_indices) >= int(cfg.case.user.num_data_points):
+                        break
+                    indices = class_to_indices.get(cls, [])
+                    if len(indices) == 0:
+                        continue
+                    cursor = class_cursors[cls] % len(indices)
+                    selected_indices.append(indices[cursor])
+                    class_cursors[cls] += 1
+            subset = torch.utils.data.Subset(full_dataset, selected_indices)
+            sampler = torch.utils.data.SequentialSampler(subset)
+            user.dataloader = torch.utils.data.DataLoader(
+                subset,
+                batch_size=len(subset),
+                sampler=sampler,
+                collate_fn=full_collate_fn,
+                drop_last=False,
+                num_workers=user.dataloader.num_workers,
+                pin_memory=user.dataloader.pin_memory,
+                persistent_workers=user.dataloader.persistent_workers,
+            )
+            user.dataloader.name = full_loader_name or user.dataloader.name
         if cfg.case.data.modality == "text":
             dshape = user.dataloader.dataset[0]["input_ids"].shape
             data_shape_mismatch = any([d != d_ref for d, d_ref in zip(dshape, cfg.case.data.shape)])

@@ -51,8 +51,8 @@ def get_var_name(obj):
 class NonLinearSurrogateModelExtension(OptimizationBasedAttacker):
     """Implements a wide spectrum of optimization-based attacks."""
 
-    def __init__(self, model, loss_fn, cfg_attack, setup=dict(dtype=torch.float, device=torch.device("cpu"))):
-        super().__init__(model, loss_fn, cfg_attack, setup)
+    def __init__(self, model, loss_fn, cfg_attack, setup=dict(dtype=torch.float, device=torch.device("cpu")), **kwargs):
+        super().__init__(model, loss_fn, cfg_attack, setup, **kwargs)
         self.t = torch.tensor(0.5, requires_grad=True, **setup)
         self.setup = setup
         self.regularizers = []

@@ -5,10 +5,11 @@ type: generativegia
 attack_type: gias
 
 objective:
-  type: cosine-similarity #cosine-grad-cossim-posembed
+  type: cosine-grad-cossim-posembed # cosine-similarity
   scale: 1.0 # need to have a much smaller scale like 0.0001 for euclidean objectives
   posembed_scale: 0.1
   task_regularization: 0.0
+  posembed_trainable: False # This belongs to attack strategies, hence should be defined here.
 
 generator:
   type: dcgan
@@ -31,7 +32,7 @@ restarts:
 optim:
   optimizer: adam
   signed:
-  step_size: 0.1
+  step_size: 0.03
   boxed: True
   max_iterations: 2000
   step_size_decay: step-lr
@@ -41,8 +42,8 @@ optim:
 optim_w:
   optimizer: adam
   signed: 
-  step_size: 0.001
-  boxed: True
+  step_size: 0.0005
+  boxed: False
   max_iterations: 8_000
   step_size_decay: step-lr
 
@@ -58,8 +59,8 @@ regularization:
     parallel: true
     scale: 1e-4
   # image_prior:
-  #   scale: 0.01
+  #   scale: 0.0001
   #   max_iters: 0
   #   first_bn_multiplier: 1.0
   l2_regularization:
-    scale: 0.001
+    scale: 0.0001

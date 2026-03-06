@@ -22,15 +22,8 @@ class OptimizationAprilAttacker(OptimizationBasedAttacker):
     by opyimization L2 loss on the the parameter gradients.
     And also optimizes the cosine similarity loss on the PosEmbed gradients
     """
-    def __init__(self, model, loss_fn, cfg_attack, setup=dict(dtype=torch.float, device=torch.device("cpu"))):
-        super().__init__(model, loss_fn, cfg_attack, setup)
-        objective_fn = objective_lookup.get(self.cfg.objective.type)
-        if objective_fn is None:
-            raise ValueError(f"Unknown objective type {self.cfg.objective.type} given.")
-        else:
-            self.objective = objective_fn(scale=self.cfg.objective.scale, 
-                                        task_regularization=self.cfg.objective.task_regularization,
-                                        posembed_scale=self.cfg.objective.posembed_scale)
+    def __init__(self, model, loss_fn, cfg_attack, setup=dict(dtype=torch.float, device=torch.device("cpu")), **kwargs):
+        super().__init__(model, loss_fn, cfg_attack, setup, **kwargs)
 
     def _run_trial(self, rec_model, shared_data, labels, stats, trial, initial_data=None, dryrun=False):
         """Run a single reconstruction trial."""
