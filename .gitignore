@@ -174,3 +174,9 @@ dmypy.json
 *.ods
 
 *.json
+
+# OS generated files
+.DS_Store
+
+# Local CUDA build helper
+breaching/cuda_ext_compile.sh
