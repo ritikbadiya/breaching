@@ -16,7 +16,7 @@ generator:
   z_dim: 100
   ngf: 64
   nc: 3
-  network_wts: "${hydra:runtime.cwd}/breaching/pretrained/DCGAN/netG_epoch_199.pth"
+  network_wts: "file://${hydra:runtime.original_cwd}/breaching/pretrained/DCGAN/netG_epoch_199.pth"
   # type: styleganxl
   # network_wts: "${hydra:runtime.cwd}/breaching/pretrained/StyleGANXL/cifar10.pkl"
   # type: biggan
