@@ -1,3 +1,10 @@
+april_analytic.slurm
+gias.slurm
+gias_posemb2.slurm
+gismn.slurm
+run_grid_3.slurm
+run_seer.slurm
+seer.slurm
 
 myenv3/
 venv/

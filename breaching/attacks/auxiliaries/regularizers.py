@@ -532,7 +532,7 @@ class PatchPrior(torch.nn.Module):
     def forward(self, tensor, *args, **kwargs):
         """Compute Total Variation on patches of the image."""
         tv_loss = self.total_variation_patches(tensor, P=self.patch_size)
-        return tv_loss
+        return tv_loss * self.scale
 
     def __repr__(self):
         return f"Patch Prior Total Variation, scale={self.scale}, patch_size={self.patch_size}, p={self.inner_exp} q={self.outer_exp}. {'Color TV: double oppponents' if self.double_opponents else ''}"
